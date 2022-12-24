@@ -9,7 +9,7 @@ forecast_reader = csv.reader(open("flu_fct_processed.csv", "r"), delimiter=',')
 
 dates = None
 methods = []
-forecasts = []
+raw_forecasts = []
 gtruth = []
 
 for (i, row) in enumerate(forecast_reader):
@@ -20,7 +20,7 @@ for (i, row) in enumerate(forecast_reader):
             gtruth = list(map(float, row[1:]))
         else:
             methods.append(row[0])
-            forecasts.append(list(map(float, row[1:])))
+            raw_forecasts.append(list(map(float, row[1:])))
 
 K = len(methods)
 T = len(dates)
@@ -59,10 +59,19 @@ def plot_pdf(sigma, w, x_axis):
         pdf = 0
         for k in range(K):
             # print(a[k] + b[k] * forecasts[k][-1])
-            pdf += w[k] * norm.pdf(X, a[k] + b[k] * forecasts[k][-1], curr_sigma)
+            pdf += w[k] * norm.pdf(X, a[k] + b[k] * raw_forecasts[k][-1], curr_sigma)
         return pdf
 
+    pdf = lambda x: ensemble_pdf(sigma, x)
+
     plt.plot(x_axis, ensemble_pdf(sigma, x_axis))
+
+    for u in [.5, .95]:
+        l, r = get_CI(u, sigma)
+        plt.axvline(x=l, color="black", linestyle="dashed")
+        plt.axvline(x=r, color="black", linestyle="dashed")
+    plt.axvline(x=gtruth[-1], color="black")
+
     plt.show()
 
 EM_iters = 10
@@ -77,7 +86,7 @@ w = w_from_iters[EM_iters]
 
 def sample(sigma):
     k = np.random.choice(list(range(K)), p=w)
-    mean = forecasts[k][-1]
+    mean = a[k] + b[k] * raw_forecasts[k][-1]
     return np.random.normal(mean, sigma)
 
 def get_CI(CI_size, sigma):
@@ -92,7 +101,7 @@ def get_CI(CI_size, sigma):
     end_index = n_samples - start_index
     return samples[start_index], samples[end_index]
 
-print("BEFORE CALIBRATION:")
+print("BEFORE CALIBRATION: sigma=", sigma)
 print("MIDDLE 50%:", get_CI(.5, sigma))
 print("MIDDLE 95%:", get_CI(.95, sigma))
 plot_pdf(sigma, w, np.arange(6000, 16000, 10))
@@ -104,7 +113,7 @@ plot_pdf(sigma, w, np.arange(6000, 16000, 10))
 def ensemble_cdf(curr_sigma, X):
     cdf = 0
     for k in range(K):
-        cdf += w[k] * norm.cdf(X, a[k] + b[k] * forecasts[k][-1], curr_sigma)
+        cdf += w[k] * norm.cdf(X, a[k] + b[k] * raw_forecasts[k][-1], curr_sigma)
     return cdf
 
 def CRPS(sigma, x):
@@ -140,10 +149,13 @@ while hi - lo > 1:
 
 calibrated_sigma = lo
 
-print("AFTER CALIBRATION:")
+print("AFTER CALIBRATION: calibrated_sigma=", calibrated_sigma)
 print("MIDDLE 50%:", get_CI(.5, calibrated_sigma))
 print("MIDDLE 95%:", get_CI(.95, calibrated_sigma))
-plot_pdf(lo, w, np.arange(10000, 12500, 10))
+plot_pdf(calibrated_sigma, w, np.arange(10000, 12500, 10))
+
+print("GROUND TRUTH on " + dates[-1] + ":")
+print(gtruth[-1])
 
 #
 # plt.plot(x_axis, list(map(lambda s: CRPS(s, gtruth[-1]), x_axis)))
