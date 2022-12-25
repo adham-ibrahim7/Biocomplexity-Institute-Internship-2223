@@ -4,7 +4,7 @@ from scipy import stats
 
 # Reading in forecasts
 
-forecast_reader = csv.reader(open("US_1-step_ahead-flu_fct_files_2022-11-13.csv", "r"), delimiter=',')
+forecast_reader = csv.reader(open("../task1_data/US_1-step_ahead-flu_fct_files_2022-11-13.csv", "r"), delimiter=',')
 
 forecasts = []
 line_count = 0
@@ -27,7 +27,7 @@ for row in forecast_reader:
 
 # Reading in ground truth values
 
-gtruth_reader = csv.reader(open("flu_hosp_weekly_filt_case_data.csv", "r"), delimiter=",")
+gtruth_reader = csv.reader(open("../raw_data/flu_hosp_state_gtruth_2022-11-13.csv", "r"), delimiter=",")
 rows = list(gtruth_reader)
 dates = rows[0][1:]
 gtruth_values = list(float(u) for u in rows[-1][1:])
@@ -112,9 +112,9 @@ def EM_iteration():
 
 # Store forecast, ground truth in a nicer format in `flu_fct_processed.csv`
 
-out = open("flu_fct_processed.csv", "w", newline='')
+out = open("../task1_data/flu_fct_processed.csv", "w", newline='')
 forecast_writer = csv.writer(out)
-forecast_writer.writerow(["data"] + list(dates[start_index+t] for t in range(T)))
+forecast_writer.writerow(["raw_data"] + list(dates[start_index+t] for t in range(T)))
 for k in range(K):
     forecast_writer.writerow([methods[k]] + list(str(f(k, t)) for t in range(T)))
 forecast_writer.writerow(["gtruth"] + list(str(y(t)) for t in range(T)))
@@ -125,7 +125,7 @@ out.close()
 iters = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 prev = 0
 
-out = open("ensemble_parameters.csv", "w", newline='')
+out = open("../task1_data/ensemble_parameters.csv", "w", newline='')
 parameters_writer = csv.writer(out)
 parameters_writer.writerow(["EM_iters", "sigma"] + methods)
 for curr in iters:
@@ -139,9 +139,9 @@ out.close()
 
 # Store regression parameters
 
-out = open("regression_parameters.csv", "w", newline='')
+out = open("../task1_data/regression_parameters.csv", "w", newline='')
 parameters_writer = csv.writer(out)
-parameters_writer.writerow(["data"] + methods)
+parameters_writer.writerow(["raw_data"] + methods)
 parameters_writer.writerow(["a"] + list(str(regression_parameters[k][0]) for k in range(K)))
 parameters_writer.writerow(["b"] + list(str(regression_parameters[k][1]) for k in range(K)))
 out.close()

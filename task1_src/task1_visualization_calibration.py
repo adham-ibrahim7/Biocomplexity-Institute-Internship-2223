@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 from scipy.integrate import quad as integral
 
-forecast_reader = csv.reader(open("flu_fct_processed.csv", "r"), delimiter=',')
+forecast_reader = csv.reader(open("../task1_data/flu_fct_processed.csv", "r"), delimiter=',')
 
 dates = None
 methods = []
@@ -25,7 +25,7 @@ for (i, row) in enumerate(forecast_reader):
 K = len(methods)
 T = len(dates)
 
-ensemble_parameters_reader = csv.reader(open("ensemble_parameters.csv", "r"), delimiter=",")
+ensemble_parameters_reader = csv.reader(open("../task1_data/ensemble_parameters.csv", "r"), delimiter=",")
 
 sigma_from_iters = {}
 w_from_iters = {}
@@ -39,7 +39,7 @@ for (i, row) in enumerate(ensemble_parameters_reader):
     sigma_from_iters[EM_iters] = sigma_i
     w_from_iters[EM_iters] = w_i
 
-regression_parameters_reader = csv.reader(open("regression_parameters.csv", "r"), delimiter=",")
+regression_parameters_reader = csv.reader(open("../task1_data/regression_parameters.csv", "r"), delimiter=",")
 
 a = []
 b = []
