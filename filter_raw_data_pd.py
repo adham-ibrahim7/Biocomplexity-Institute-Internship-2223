@@ -14,11 +14,15 @@ filter_str = "cnty in @counties and step_ahead in @step_ahead"
 print("counties:", counties)
 print("step ahead:", step_ahead)
 
-data_frame = pd.read_csv(in_filename, dtype={"cnty": "str"})
-print("Total rows:", len(data_frame))
+raw_df = pd.read_csv(in_filename, dtype={"cnty": "str"})
+print("Total rows:", len(raw_df))
 
-filtered = data_frame.query(filter_str)
-print(filtered)
+final_df = raw_df.query(filter_str)\
+    .drop_duplicates()\
+    .drop('fct_std', axis=1)\
+    .sort_values(by=['cnty', 'method', 'horizon', 'step_ahead'])
+
+print(final_df)
 
 with open(out_filename, "w", newline='') as out_file:
-    filtered.to_csv(path_or_buf=out_file, sep=",", index=False)
+    final_df.to_csv(path_or_buf=out_file, sep=",", index=False)
