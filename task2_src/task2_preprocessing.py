@@ -4,54 +4,108 @@ import numpy as np
 from scipy import stats
 
 in_filename = "../task2_data/top_10_pop_all_step_ahead.csv"
+
 all_data = pd.read_csv(in_filename, dtype={"cnty": "str"})
 
 print("Processing raw data.")
 
-counties = all_data.cnty.unique()
+training_counties = all_data.cnty.unique()[:5]
 all_dates = all_data.horizon.unique()
-methods = all_data.method.unique()
+training_methods = all_data.method.unique()
 
-f: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
-y: dict[str, dict[str, float]] = {}
-for county in counties[:1]:
-    all_county = all_data.query("cnty == @county")
-    f[county] = {}
-    y[county] = {}
-    for method in methods:
-        county_method = all_county.query("method == @method")
-        f[county][method] = {}
+forecasts: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
+ground_truth: dict[str, dict[str, float]] = {}
+for county in training_counties:
+    county_df = all_data.query("cnty == @county")
+    forecasts[county] = {}
+    ground_truth[county] = {}
+    for method in training_methods:
+        county_method_df = county_df.query("method == @method")
+        forecasts[county][method] = {}
         for date in all_dates:
-            f[county][method][date] = {}
-            county_method_date = county_method.query("horizon == @date")
+            forecasts[county][method][date] = {}
+            county_method_date_df = county_method_df.query("horizon == @date")
 
-            if not county_method_date.empty:
-                for i in range(len(county_method_date)):
-                    step_ahead = county_method_date.at[county_method_date.index[i], 'step_ahead']
-                    fct_mean = county_method_date.at[county_method_date.index[i], 'fct_mean']
-                    f[county][method][date][step_ahead] = fct_mean
+            if not county_method_date_df.empty:
+                for i in range(len(county_method_date_df)):
+                    step_ahead = county_method_date_df.at[county_method_date_df.index[i], 'step_ahead']
+                    fct_mean = county_method_date_df.at[county_method_date_df.index[i], 'fct_mean']
+                    forecasts[county][method][date][step_ahead] = fct_mean
 
-            if date not in y[county]:
-                temp = county_method.query("fct_date == @date")
+            if date not in ground_truth[county]:
+                temp = county_method_df.query("fct_date == @date")
                 if temp.empty:
                     continue
-                y[county][date] = temp.at[temp.index[0], 'true']
+                ground_truth[county][date] = temp.at[temp.index[0], 'true']
 
 print("Done processing raw data.")
 
-##################################################################################################
+################################################################################################
 
-horizon = '2022-10-02'
+# date_index = 20
+# horizon = all_dates[date_index]
 step_ahead = '1-step_ahead'
-fct_date = '2022-10-09'
-county = '04013'
+# fct_date = all_dates[date_index+1]
+# county = '04013'
+training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
 
-dates = {}
+K = len(training_methods)
+S = len(training_counties)
+T = 15
 
-K = len(methods)
+training_dates = all_dates[1:T+1]
+
+################################################################################################
+# PLOTTING FOR DEBUGGING
+################################################################################################
+
+import matplotlib.pyplot as plt
+
+# Returns days filtered from dates when the method had a forecast output
+def filter_valid_dates(method, dates):
+    return np.array(list(filter(lambda t: step_ahead in forecasts[county][method][t], dates)))
+
+def plot(plt_counties, plt_methods, plt_dates):
+    for county in plt_counties:
+        plt.clf()
+        plt.plot(plt_dates, list(map(lambda x: ground_truth[county][x], plt_dates)), color='black')
+        for method in plt_methods:
+            valid_dates = filter_valid_dates(method, plt_dates)
+            plt.plot(valid_dates, list(map(lambda x: forecasts[county][method][x][step_ahead], valid_dates)))
+        # plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
+        plt.legend(labels=['gtruth'] + plt_methods)
+        plt.title(county + " forecasts")
+        plt.gcf().subplots_adjust(bottom=0.2)
+        plt.show()
+
+def plot_error(plt_counties, plt_methods, plt_dates):
+    for county in plt_counties:
+        plt.clf()
+        for method in plt_methods:
+            valid_dates = filter_valid_dates(method, plt_dates)
+            plt.plot(valid_dates, list(map(lambda x: forecasts[county][method][x][step_ahead] / ground_truth[county][x], valid_dates)))
+        # plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
+        plt.legend(labels=plt_methods)
+        plt.title(county + " error")
+        plt.gcf().subplots_adjust(bottom=0.2)
+        plt.show()
+
+plt_counties = training_counties[:3]
+plt_methods = ['AR_spatial']
+plt_dates = all_dates[1:]
+
+plot(plt_counties, plt_methods, plt_dates)
+plot_error(plt_counties, plt_methods, plt_dates)
+
+################################################################################################
+# LINEAR REGRESSION TO GET PARAMETERS a[k], b[k] FOR EACH METHOD
+################################################################################################
 
 # method to perform linear regression of Y on X
 def regression(X, Y):
+    if len(X) == 0:
+        return -1, -1
+
     X_mean = np.mean(X)
     Y_mean = np.mean(Y)
 
@@ -63,53 +117,71 @@ def regression(X, Y):
 
 # Compute a_k, b_k for each method: the regression parameters of the forecast's history on the ground truth
 
+# valid_dates = {}
 regression_parameters = {}
-for method in methods:
-    dates[method] = np.array(list(filter(lambda t: step_ahead in f[county][method][t], f[county][method].keys())))[1:]
 
-    X = list(map(lambda x: f[county][method][x][step_ahead], dates[method]))
-    Y = list(map(lambda x: y[county][x], dates[method]))
+for method in training_methods:
+    X = []
+    Y = []
+    for county in training_counties:
+
+        # print(method.ljust(20), end=' ')
+        # for day in training_dates:
+        #     print('T' if day in valid_dates[method] else ' ', end='')
+        # print()
+
+        X += list(map(lambda x: forecasts[county][method][x][step_ahead], training_dates))
+        Y += list(map(lambda x: ground_truth[county][x], training_dates))
 
     regression_parameters[method] = regression(X, Y)
     print(method, regression_parameters[method])
 
-# import matplotlib.pyplot as plt
-#
-# for method in methods:
-#     plt.plot(dates[method], list(map(lambda x: f[county][method][x][step_ahead], dates[method])))
-# plt.plot(y[county].keys(), y[county].values())
-# plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
-# plt.gcf().subplots_adjust(bottom=0.2)
-# plt.show()
+################################################################################################
+# EXPECTATION-MAXIMIZATION ALGORITHM TO FIND w, sigma
+################################################################################################
 
-#
-# # Expectation-maximization algorithm to find w, sigma
-#
-# z = np.full((K, T), 1 / K)
-# w = np.full(K, 1 / K)
-# sigma = 100
-#
-# def EM_iteration():
-#     global w, z, sigma
-#
-#     q = np.zeros((K, T))
-#     for k in range(K):
-#         a, b = regression_parameters[k]
-#         for t in range(T):
-#             q[k][t] = w[k] * stats.norm(a + b * f(k, t), sigma).pdf(y(t))
-#     temp = np.zeros((K, T))
-#     for k in range(K):
-#         for t in range(T):
-#             temp[k][t] = q[k][t] / sum(q[j][t] for j in range(K))
-#     z = temp
-#
-#     # print(z)
-#
-#     w = np.zeros(K)
-#     for k in range(K):
-#         w[k] = np.mean(z[k])
-#
-#     sigma = np.sqrt(1/T * sum(sum(z[k][t] * np.square(f(k, t)-y(t)) for k in range(K)) for t in range(T)))
+def EM_iteration(f, y, K, T, w, sigma):
+    # global w, z, sigma
+
+    q = np.zeros((S, K, T))
+    for s in range(S):
+        for k in range(K):
+            a, b = regression_parameters[training_methods[k]]
+            for t in range(T):
+                q[s][k][t] = w[k] * stats.norm(a + b * f(s, k, t), sigma).pdf(y(s, t))
+    z = np.zeros((S, K, T))
+    for s in range(S):
+        for k in range(K):
+            for t in range(T):
+                z[s][k][t] = q[s][k][t] / sum(q[s][j][t] for j in range(K))
+
+    w = np.zeros(K)
+    for k in range(K):
+        w[k] = np.mean(z[:, k, :])
+
+    variance = 0
+    for s in range(S):
+        for t in range(T):
+            for k in range(K):
+                variance += z[s][k][t] * np.square(y(s, t) - f(s, k, t))
+    variance /= (S * T)
+
+    sigma = np.sqrt(variance)
+
+    return w, sigma
+
+def f(s, k, t):
+    return forecasts[training_counties[s]][training_methods[k]][training_dates[t]][step_ahead]
+
+def y(s, t):
+    return ground_truth[training_counties[s]][training_dates[t]]
+
+w = np.full(K, 1 / K)
+sigma = 100
+
+for _ in range(50):
+    w, sigma = EM_iteration(f, y, K, T, w, sigma)
+print(w, sigma)
 
 # # Store forecast, ground truth in a nicer format in `flu_fct_processed.csv`
 #
