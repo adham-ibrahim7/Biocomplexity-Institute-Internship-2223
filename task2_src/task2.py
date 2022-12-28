@@ -4,7 +4,8 @@ import numpy as np
 from scipy import stats
 import timeit
 
-def get_data(counties, dates, methods, all_data_df):
+# TODO: Create proper docstrings for each method
+def get_data(all_data_df, counties, dates, methods):
     print("BEGIN INPUTTING RAW DATA.")
 
     forecasts: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
@@ -27,6 +28,7 @@ def get_data(counties, dates, methods, all_data_df):
                         fct_mean = county_method_date_df.at[county_method_date_df.index[i], 'fct_mean']
                         forecasts[county][method][date][step_ahead] = fct_mean
 
+                # TODO: Is there a better way to input the ground truth
                 if date not in ground_truth[county]:
                     temp = county_method_df.query("fct_date == @date")
                     if temp.empty:
@@ -70,31 +72,24 @@ def plot_error(plt_counties, plt_methods, plt_dates):
         plt.gcf().subplots_adjust(bottom=0.2)
         plt.show()
 
-# plt_counties = training_counties[:3]
-# plt_methods = ['AR_spatial']
-# plt_dates = all_dates[1:]
-
-# plot(plt_counties, plt_methods, plt_dates)
-# plot_error(plt_counties, plt_methods, plt_dates)
-
 ################################################################################################
 # LINEAR REGRESSION TO GET PARAMETERS a[k], b[k] FOR EACH METHOD
 ################################################################################################
 
-def get_regression_parameters(forecasts, ground_truth, counties, methods, dates):
+def get_regression_parameters(forecasts, ground_truth, training_counties, training_methods, training_dates):
     regression_parameters = {}
 
-    for method in methods:
+    for method in training_methods:
         X = []
         Y = []
-        for county in counties:
+        for county in training_counties:
             # print(method.ljust(20), end=' ')
             # for day in training_dates:
             #     print('T' if day in valid_dates[method] else ' ', end='')
             # print()
 
-            X += list(map(lambda x: forecasts[county][method][x][step_ahead], dates))
-            Y += list(map(lambda x: ground_truth[county][x], dates))
+            X += list(map(lambda x: forecasts[county][method][x][step_ahead], training_dates))
+            Y += list(map(lambda x: ground_truth[county][x], training_dates))
 
         slope, intercept, _, _, _ = stats.linregress(X, Y)
         regression_parameters[method] = (intercept, slope)
@@ -106,15 +101,7 @@ def get_regression_parameters(forecasts, ground_truth, counties, methods, dates)
 # EXPECTATION-MAXIMIZATION ALGORITHM TO FIND w, sigma
 ################################################################################################
 
-def f(s, k, t):
-    return forecasts[training_counties[s]][training_methods[k]][training_dates[t]][step_ahead]
-
-def y(s, t):
-    return ground_truth[training_counties[s]][training_dates[t]]
-
 def EM_iteration(f, y, S, K, T, w, sigma):
-    # global w, z, sigma
-
     q = np.zeros((S, K, T))
     for s in range(S):
         for k in range(K):
@@ -142,7 +129,13 @@ def EM_iteration(f, y, S, K, T, w, sigma):
 
     return w, sigma
 
-def EM(f, y, S, K, T, init_w, init_sigma, iters):
+def EM(forecasts, ground_truth, training_counties, training_methods, training_dates, init_w, init_sigma, iters):
+    def f(s, k, t):
+        return forecasts[training_counties[s]][training_methods[k]][training_dates[t]][step_ahead]
+
+    def y(s, t):
+        return ground_truth[training_counties[s]][training_dates[t]]
+
     w = init_w
     sigma = init_sigma
 
@@ -154,7 +147,6 @@ def EM(f, y, S, K, T, init_w, init_sigma, iters):
     print("EM ALGORITHM COMPLETE.")
 
     return w, sigma
-
 
 ################################################################################################
 # PLOT PDF BEFORE CALIBRATION
@@ -219,19 +211,24 @@ if __name__ == "__main__":
     step_ahead = '1-step_ahead'
     training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
 
-    K = len(training_methods)
     S = len(training_counties)
+    K = len(training_methods)
     T = 15
-
     training_dates = all_dates[1:T+1]
 
     # TODO: only read in values for desired step-ahead, remove one dimension from forecasts dict
-    forecasts, ground_truth = get_data(training_counties, training_dates, training_methods, all_data)
+    forecasts, ground_truth = get_data(all_data, training_counties, training_dates, training_methods)
 
     regression_parameters = get_regression_parameters(forecasts, ground_truth, training_counties, training_methods, training_dates)
 
-    # TODO: make EM method take in forecasts, ground_truth, and not f, y, etc.
-    w, sigma = EM(f, y, S, K, T, np.full(K, 1 / K), 100, 10)
+    # plt_counties = training_counties[:3]
+    # plt_methods = ['AR_spatial']
+    # plt_dates = all_dates[1:]
+
+    # plot(plt_counties, plt_methods, plt_dates)
+    # plot_error(plt_counties, plt_methods, plt_dates)
+
+    w, sigma = EM(forecasts, ground_truth, training_counties, training_methods, training_dates, np.full(K, 1 / K), 100, 10)
 
     print(w, sigma)
 
