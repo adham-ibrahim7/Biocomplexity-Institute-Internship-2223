@@ -5,10 +5,10 @@ from scipy import stats
 import timeit
 
 # TODO: Create proper docstrings for each method
-def get_data(all_data_df, counties, dates, methods):
+def get_data(all_data_df, counties, dates, methods, step_ahead):
     print("BEGIN INPUTTING RAW DATA.")
 
-    forecasts: dict[str, dict[str, dict[str, dict[str, float]]]] = {}
+    forecasts: dict[str, dict[str, dict[str, float]]] = {}
     ground_truth: dict[str, dict[str, float]] = {}
 
     for county in counties:
@@ -19,14 +19,15 @@ def get_data(all_data_df, counties, dates, methods):
             county_method_df = county_df.query("method == @method")
             forecasts[county][method] = {}
             for date in dates:
-                forecasts[county][method][date] = {}
                 county_method_date_df = county_method_df.query("horizon == @date")
 
                 if not county_method_date_df.empty:
                     for i in range(len(county_method_date_df)):
-                        step_ahead = county_method_date_df.at[county_method_date_df.index[i], 'step_ahead']
+                        curr_step_ahead = county_method_date_df.at[county_method_date_df.index[i], 'step_ahead']
                         fct_mean = county_method_date_df.at[county_method_date_df.index[i], 'fct_mean']
-                        forecasts[county][method][date][step_ahead] = fct_mean
+                        if curr_step_ahead == step_ahead:
+                            forecasts[county][method][date] = fct_mean
+                            break
 
                 # TODO: Is there a better way to input the ground truth
                 if date not in ground_truth[county]:
@@ -45,7 +46,7 @@ def get_data(all_data_df, counties, dates, methods):
 
 # Returns days filtered from dates when the method had a forecast output
 def filter_valid_dates(county, method, dates):
-    return np.array(list(filter(lambda t: step_ahead in forecasts[county][method][t], dates)))
+    return np.array(list(filter(lambda t: t in forecasts[county][method], dates)))
 
 def plot(plt_counties, plt_methods, plt_dates):
     for county in plt_counties:
@@ -53,7 +54,7 @@ def plot(plt_counties, plt_methods, plt_dates):
         plt.plot(plt_dates, list(map(lambda x: ground_truth[county][x], plt_dates)), color='black')
         for method in plt_methods:
             valid_dates = filter_valid_dates(county, method, plt_dates)
-            plt.plot(valid_dates, list(map(lambda x: forecasts[county][method][x][step_ahead], valid_dates)))
+            plt.plot(valid_dates, list(map(lambda x: forecasts[county][method][x], valid_dates)))
         # plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
         plt.legend(labels=['gtruth'] + plt_methods)
         plt.title(county + " forecasts")
@@ -65,7 +66,7 @@ def plot_error(plt_counties, plt_methods, plt_dates):
         plt.clf()
         for method in plt_methods:
             valid_dates = filter_valid_dates(county, method, plt_dates)
-            plt.plot(valid_dates, list(map(lambda x: forecasts[county][method][x][step_ahead] / ground_truth[county][x], valid_dates)))
+            plt.plot(valid_dates, list(map(lambda x: forecasts[county][method][x] / ground_truth[county][x], valid_dates)))
         # plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
         plt.legend(labels=plt_methods)
         plt.title(county + " error")
@@ -88,7 +89,7 @@ def get_regression_parameters(forecasts, ground_truth, training_counties, traini
             #     print('T' if day in valid_dates[method] else ' ', end='')
             # print()
 
-            X += list(map(lambda x: forecasts[county][method][x][step_ahead], training_dates))
+            X += list(map(lambda x: forecasts[county][method][x], training_dates))
             Y += list(map(lambda x: ground_truth[county][x], training_dates))
 
         slope, intercept, _, _, _ = stats.linregress(X, Y)
@@ -131,7 +132,7 @@ def EM_iteration(f, y, S, K, T, w, sigma):
 
 def EM(forecasts, ground_truth, training_counties, training_methods, training_dates, init_w, init_sigma, iters):
     def f(s, k, t):
-        return forecasts[training_counties[s]][training_methods[k]][training_dates[t]][step_ahead]
+        return forecasts[training_counties[s]][training_methods[k]][training_dates[t]]
 
     def y(s, t):
         return ground_truth[training_counties[s]][training_dates[t]]
@@ -156,7 +157,7 @@ def ensemble_pdf(county, curr_sigma, X):
     pdf = 0
     for k in range(K):
         a, b = regression_parameters[training_methods[k]]
-        adjusted_fct_mean = a + b * forecasts[county][training_methods[k]][training_dates[-1]][step_ahead]
+        adjusted_fct_mean = a + b * forecasts[county][training_methods[k]][training_dates[-1]]
         pdf += w[k] * stats.norm.pdf(X, adjusted_fct_mean, curr_sigma)
     return pdf
 
@@ -178,10 +179,10 @@ def plot_pdf(county, sigma, x_axis):
 def sample(county, sigma):
     k = np.random.choice(list(range(K)), p=w)
     a, b = regression_parameters[training_methods[k]]
-    mean = a + b * forecasts[county][training_methods[k]][training_dates[-1]][step_ahead]
+    mean = a + b * forecasts[county][training_methods[k]][training_dates[-1]]
     return np.random.normal(mean, sigma)
 
-def get_CI(county, sigma, CI_size):
+def get_confidence_interval(county, sigma, CI_size):
     n_samples = 1000
     samples = np.empty(n_samples)
     for i in range(n_samples):
@@ -217,7 +218,7 @@ if __name__ == "__main__":
     training_dates = all_dates[1:T+1]
 
     # TODO: only read in values for desired step-ahead, remove one dimension from forecasts dict
-    forecasts, ground_truth = get_data(all_data, training_counties, training_dates, training_methods)
+    forecasts, ground_truth = get_data(all_data, training_counties, training_dates, training_methods, step_ahead)
 
     regression_parameters = get_regression_parameters(forecasts, ground_truth, training_counties, training_methods, training_dates)
 
@@ -233,7 +234,7 @@ if __name__ == "__main__":
     print(w, sigma)
 
     print("BEFORE CALIBRATION: sigma=", sigma)
-    print("MIDDLE 50%:", get_CI(training_counties[0], sigma, .5))
-    print("MIDDLE 95%:", get_CI(training_counties[0], sigma, .95))
+    print("MIDDLE 50%:", get_confidence_interval(training_counties[0], sigma, .5))
+    print("MIDDLE 95%:", get_confidence_interval(training_counties[0], sigma, .95))
     print("TRUE:", ground_truth[training_counties[0]][training_dates[-1]])
     plot_pdf(training_counties[0], sigma, np.arange(10000, 16000, 20))
