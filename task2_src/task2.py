@@ -5,30 +5,25 @@ from scipy import stats
 from scipy.integrate import quad as integral
 import timeit
 
-# TODO: Create proper docstrings for each method
+# TODO: MAKE EVERYTHING INTO A CLASS Create proper docstrings for each method
 def get_data(all_data_df, counties, dates, methods, step_ahead):
     print("BEGIN INPUTTING RAW DATA.")
 
-    forecasts: dict[str, dict[str, dict[str, float]]] = {}
-    ground_truth: dict[str, dict[str, float]] = {}
+    forecasts = {}
+    ground_truth = {}
 
     for county in counties:
-        county_df = all_data_df.query("cnty == @county")
+        county_df = all_data_df.query("cnty == '{}'".format(county))
         forecasts[county] = {}
         ground_truth[county] = {}
         for method in methods:
-            county_method_df = county_df.query("method == @method")
+            county_method_df = county_df.query("method == '{}'".format(method))
             forecasts[county][method] = {}
             for date in dates:
-                county_method_date_df = county_method_df.query("horizon == @date")
-
-                if not county_method_date_df.empty:
-                    for i in range(len(county_method_date_df)):
-                        curr_step_ahead = county_method_date_df.at[county_method_date_df.index[i], 'step_ahead']
-                        fct_mean = county_method_date_df.at[county_method_date_df.index[i], 'fct_mean']
-                        if curr_step_ahead == step_ahead:
-                            forecasts[county][method][date] = fct_mean
-                            break
+                target_df = county_method_df.query("horizon == '{}' and step_ahead == '{}'".format(date, step_ahead))
+                if not target_df.empty:
+                    fct_mean = target_df.at[target_df.index[0], 'fct_mean']
+                    forecasts[county][method][date] = fct_mean
 
                 # TODO: Is there a better way to input the ground truth
                 if date not in ground_truth[county]:
@@ -161,7 +156,7 @@ def EM(forecasts, ground_truth, training_counties, training_methods, training_da
 ################################################################################################
 
 #TODO add all parameters to this
-def ensemble_pdf(county, date, curr_sigma, X):
+def ensemble_pdf(county, date, w, curr_sigma, X):
     pdf = 0
     for k in range(K):
         a, b = regression_parameters[training_methods[k]]
@@ -169,8 +164,8 @@ def ensemble_pdf(county, date, curr_sigma, X):
         pdf += w[k] * stats.norm.pdf(X, adjusted_fct_mean, curr_sigma)
     return pdf
 
-def plot_pdf(county, date, sigma, x_axis):
-    plt.plot(x_axis, ensemble_pdf(county, date, sigma, x_axis))
+def plot_pdf(county, date, w, sigma, x_axis):
+    plt.plot(x_axis, ensemble_pdf(county, date, w, sigma, x_axis))
 
     # for u in [.5, .95]:
     #     l, r = get_CI(u, sigma)
@@ -184,17 +179,17 @@ def plot_pdf(county, date, sigma, x_axis):
 # GENERATE SAMPLES AND COMPUTE 50%, 95% CI
 ################################################################################################
 
-def sample(county, date, sigma):
+def sample(county, date, w, sigma):
     k = np.random.choice(list(range(K)), p=w)
     a, b = regression_parameters[training_methods[k]]
     mean = a + b * forecasts[county][training_methods[k]][date]
     return np.random.normal(mean, sigma)
 
-def get_confidence_interval(county, date, sigma, CI_size):
+def get_confidence_interval(county, date, w, sigma, CI_size):
     n_samples = 1000
     samples = np.empty(n_samples)
     for i in range(n_samples):
-        samples[i] = sample(county, date, sigma)
+        samples[i] = sample(county, date, w, sigma)
 
     samples = sorted(samples)
 
@@ -206,7 +201,7 @@ def get_confidence_interval(county, date, sigma, CI_size):
 # CALIBRATION
 ################################################################################################
 
-def ensemble_cdf(county, training_methods, date, regression_parameters, curr_sigma, X):
+def ensemble_cdf(county, training_methods, date, regression_parameters, w, curr_sigma, X):
     cdf = 0
     for k in range(K):
         a, b = regression_parameters[training_methods[k]]
@@ -214,8 +209,8 @@ def ensemble_cdf(county, training_methods, date, regression_parameters, curr_sig
     return cdf
 
 # TODO: This is very slow, even with a ternary search. Look into other methods.
-def CRPS(ground_truth, training_counties, training_methods, date, regression_parameters, sigma):
-    cdf = lambda county: lambda t: ensemble_cdf(county, training_methods, date, regression_parameters, sigma, t)
+def CRPS(ground_truth, training_counties, training_methods, date, regression_parameters, w, sigma):
+    cdf = lambda county: lambda t: ensemble_cdf(county, training_methods, date, regression_parameters, w, sigma, t)
 
     score = 0
     for county in training_counties:
@@ -232,12 +227,12 @@ def CRPS(ground_truth, training_counties, training_methods, date, regression_par
         # plt.show()
 
         true_value = ground_truth[county][date]
-        score += integral(f_1, 0, true_value)[0] + integral(f_2, true_value, 30000)[0]
+        score += integral(f_1, -np.inf, true_value)[0] + integral(f_2, true_value, np.inf)[0]
 
     return score
 
 
-def get_calibrated_sigma(ground_truth, training_counties, training_methods, date, regression_parameters, lo, hi, tolerance):
+def get_calibrated_sigma(ground_truth, training_counties, training_methods, date, regression_parameters, w, lo, hi, tolerance):
     print("BEGIN CALIBRATION.")
 
     # best_sigma = 0
@@ -255,11 +250,12 @@ def get_calibrated_sigma(ground_truth, training_counties, training_methods, date
 
         mid_left = lo + (hi - lo) / 3
         mid_right = lo + (hi - lo) * 2 / 3
-        if CRPS(ground_truth, training_counties, training_methods, date, regression_parameters, mid_left) < \
-                CRPS(ground_truth, training_counties, training_methods, date, regression_parameters, mid_right):
+        if CRPS(ground_truth, training_counties, training_methods, date, regression_parameters, w, mid_left) < \
+                CRPS(ground_truth, training_counties, training_methods, date, regression_parameters, w, mid_right):
             hi = mid_right
         else:
             lo = mid_left
+
     print("CALIBRATION COMPLETE, ITERS=", count)
 
     return lo
@@ -277,53 +273,55 @@ if __name__ == "__main__":
     all_methods = all_data.method.unique()
     all_dates = all_data.horizon.unique()
 
-    training_counties = all_counties[:5]
+    for county in all_counties[:5]:
+        training_counties = [county]
+        print("PROCESSING", county)
 
-    step_ahead = '1-step_ahead'
-    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
+        step_ahead = '1-step_ahead'
+        training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
 
-    S = len(training_counties)
-    K = len(training_methods)
-    T = 15
-    training_dates = all_dates[1:T+1]
+        S = len(training_counties)
+        K = len(training_methods)
+        T = 15
+        training_dates = all_dates[1:T+1]
 
-    forecasts, ground_truth = get_data(all_data, training_counties, training_dates, training_methods, step_ahead)
+        forecasts, ground_truth = get_data(all_data, training_counties, training_dates, training_methods, step_ahead)
 
-    regression_parameters = get_regression_parameters(forecasts, ground_truth, training_counties, training_methods, training_dates)
+        regression_parameters = get_regression_parameters(forecasts, ground_truth, training_counties, training_methods, training_dates)
 
-    # plt_counties = training_counties[:3]
-    # plt_methods = ['AR_spatial']
-    # plt_dates = all_dates[1:]
+        # plt_counties = training_counties[:3]
+        # plt_methods = ['AR_spatial']
+        # plt_dates = all_dates[1:]
 
-    # plot(plt_counties, plt_methods, plt_dates)
-    # plot_error(plt_counties, plt_methods, plt_dates)
+        # plot(plt_counties, plt_methods, plt_dates)
+        # plot_error(plt_counties, plt_methods, plt_dates)
 
-    w, uncalibrated_sigma = EM(forecasts, ground_truth, training_counties, training_methods, training_dates)
+        weights, uncalibrated_sigma = EM(forecasts, ground_truth, training_counties, training_methods, training_dates)
 
-    fct_date = training_dates[-1]
+        fct_date = training_dates[-1]
 
-    calibrated_sigma = get_calibrated_sigma(ground_truth, training_counties, training_methods, fct_date, regression_parameters, 0, 400, 5)
+        calibrated_sigma = get_calibrated_sigma(ground_truth, training_counties, training_methods, fct_date, regression_parameters, weights, 0, 400, 5)
 
-    for fct_cnty in training_counties:
-        print(fct_cnty, "---------------------------------------------")
-        true_value = ground_truth[fct_cnty][fct_date]
+        for fct_cnty in training_counties:
+            print(fct_cnty, "---------------------------------------------")
+            true_value = ground_truth[fct_cnty][fct_date]
 
-        def captured(fct_cnty, fct_date, sigma, u):
-            lo, hi = get_confidence_interval(fct_cnty, fct_date, sigma, u)
-            if lo < true_value < hi:
-                start = "CAPTURED, MARGIN=" + str(min(true_value - lo, hi - true_value))
-            else:
-                start = "NOT CAPTURED"
-            return start + "\n\t\t" + "({}, {})".format(lo, hi)
+            def captured(fct_cnty, fct_date, sigma, u):
+                lo, hi = get_confidence_interval(fct_cnty, fct_date, weights, sigma, u)
+                if lo < true_value < hi:
+                    start = "CAPTURED, MARGIN=" + str(min(true_value - lo, hi - true_value))
+                else:
+                    start = "NOT CAPTURED"
+                return start + "\n\t\t" + "({}, {})".format(lo, hi)
 
-        print("BEFORE CALIBRATION: sigma=", uncalibrated_sigma)
-        print("MIDDLE 50%:", captured(fct_cnty, fct_date, uncalibrated_sigma, .5))
-        print("MIDDLE 95%:", captured(fct_cnty, fct_date, uncalibrated_sigma, .95))
-        print("TRUE:", true_value)
-        # plot_pdf(fct_cnty, fct_date, sigma, np.arange(10000, 16000, 20))
+            print("BEFORE CALIBRATION: sigma=", uncalibrated_sigma)
+            print("MIDDLE 50%:", captured(fct_cnty, fct_date, uncalibrated_sigma, .5))
+            print("MIDDLE 95%:", captured(fct_cnty, fct_date, uncalibrated_sigma, .95))
+            print("TRUE:", true_value)
+            # plot_pdf(fct_cnty, fct_date, sigma, np.arange(10000, 16000, 20))
 
-        print("AFTER CALIBRATION: sigma=", calibrated_sigma)
-        print("MIDDLE 50%:", captured(fct_cnty, fct_date, calibrated_sigma, .5))
-        print("MIDDLE 95%:", captured(fct_cnty, fct_date, calibrated_sigma, .95))
-        print("TRUE:", true_value)
-        # plot_pdf(fct_cnty, fct_date, calibrated_sigma, np.arange(10000, 16000, 20))
+            print("AFTER CALIBRATION: sigma=", calibrated_sigma)
+            print("MIDDLE 50%:", captured(fct_cnty, fct_date, calibrated_sigma, .5))
+            print("MIDDLE 95%:", captured(fct_cnty, fct_date, calibrated_sigma, .95))
+            print("TRUE:", true_value)
+            # plot_pdf(fct_cnty, fct_date, calibrated_sigma, np.arange(10000, 16000, 20))
