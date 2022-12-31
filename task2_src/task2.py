@@ -27,12 +27,29 @@ class EnsembleForecast:
         self.fct_date = self.training_dates[-1]
 
         print("uncalibrated sigma", self.uncalibrated_sigma)
-        self.plot_pdf(self.fct_date, self.uncalibrated_sigma, np.arange(10000, 16000))
+        # self.plot_pdf(self.fct_date, self.uncalibrated_sigma, np.arange(10000, 16000))
 
-        self.calibrated_sigma = self.get_calibrated_sigma(self.fct_date, 0, 400, 5)
+        def captured(fct_date, sigma, u):
+            lo, hi = self.get_confidence_interval(fct_date, sigma, u)
+            true_value = self.ground_truth[fct_date]
+            margin = min(abs(true_value - lo), abs(hi - true_value))
+            if lo < true_value < hi:
+                start = "CAPTURED, MARGIN={}".format(margin)
+            else:
+                start = "NOT CAPTURED, MARGIN={}".format(margin)
+            return "{} ".format(fct_date) + start # + "\n\t\tinterval: ({}, {}), true: {}".format(lo, hi, true_value)
+
+        # for date in training_dates:
+        #     print(captured(date, self.uncalibrated_sigma, 0.5))
+
+        # TODO: Is there a better way to choose bounds?
+        self.calibrated_sigma = self.get_calibrated_sigma(0, self.uncalibrated_sigma * 3, 10)
 
         print("calibrated sigma", self.calibrated_sigma)
-        self.plot_pdf(self.fct_date, self.calibrated_sigma, np.arange(12400, 13000))
+        # self.plot_pdf(fct_date, self.calibrated_sigma, np.arange(1500, 3000))
+
+        # for date in training_dates:
+        #     print(captured(date, self.calibrated_sigma, 0.5))
 
     def get_data(self):
         print("BEGIN INPUTTING RAW DATA.")
@@ -127,7 +144,7 @@ class EnsembleForecast:
         mean = a + b * self.forecasts[self.training_methods[k]][date]
         return np.random.normal(mean, sigma)
 
-    def get_confidence_interval(self, date, sigma, interval_size, n_samples=1000):
+    def get_confidence_interval(self, date, sigma, interval_size, n_samples=2500):
         samples = np.empty(n_samples)
         for i in range(n_samples):
             samples[i] = self.sample(date, sigma)
@@ -146,29 +163,32 @@ class EnsembleForecast:
         return cdf
 
     # TODO: This is very slow, even with a ternary search. Look into other methods.
-    def CRPS(self, date, sigma):
-        cdf = lambda t: self.ensemble_cdf(date, sigma, t)
+    def compute_CRPS(self, sigma):
+        total_score = 0
 
-        score = 0
+        for date in training_dates:
+            cdf = lambda t: self.ensemble_cdf(date, sigma, t)
 
-        def f_1(t):
-            y = cdf(t)
-            return y * y
+            def f_1(t):
+                y = cdf(t)
+                return y * y
 
-        def f_2(t):
-            y = cdf(t)
-            return (1 - y) * (1 - y)
+            def f_2(t):
+                y = cdf(t)
+                return (1 - y) * (1 - y)
 
-        # x_axis = np.arange(10000, 16000, 20)
-        # plt.plot(x_axis, cdf(county)(x_axis))
-        # plt.show()
+            # x_axis = np.arange(10000, 16000, 20)
+            # plt.plot(x_axis, cdf(county)(x_axis))
+            # plt.show()
 
-        true_value = self.ground_truth[date]
-        score += integral(f_1, -np.inf, true_value)[0] + integral(f_2, true_value, np.inf)[0]
+            true_value = self.ground_truth[date]
+            total_score += integral(f_1, -np.inf, true_value)[0] + integral(f_2, true_value, np.inf)[0]
 
-        return score
+        print(sigma, total_score)
 
-    def get_calibrated_sigma(self, date, lo, hi, tolerance):
+        return total_score
+
+    def get_calibrated_sigma(self, lo, hi, tolerance):
         print("BEGIN CALIBRATION.")
 
         # best_sigma = 0
@@ -186,14 +206,16 @@ class EnsembleForecast:
 
             mid_left = lo + (hi - lo) / 3
             mid_right = lo + (hi - lo) * 2 / 3
-            if self.CRPS(date, mid_left) < self.CRPS(date, mid_right):
+            if self.compute_CRPS(mid_left) < self.compute_CRPS(mid_right):
                 hi = mid_right
             else:
                 lo = mid_left
 
+        calibrated_sigma = 0.5 * (lo + hi)
+
         print("CALIBRATION COMPLETE, ITERS=", count)
 
-        return lo
+        return calibrated_sigma
 
     def filter_valid_dates(self, method, dates):
         return np.array(list(filter(lambda date: date in self.forecasts[method], dates)))
@@ -254,7 +276,7 @@ if __name__ == "__main__":
 
     all_counties = all_data.cnty.unique()
     all_methods = all_data.method.unique()
-    all_dates = all_data.horizon.unique()
+    all_dates = all_data.horizon.unique()[1:]
 
     for county in all_counties[:1]:
         print("PROCESSING", county)
@@ -263,6 +285,6 @@ if __name__ == "__main__":
         training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
 
         T = 15
-        training_dates = all_dates[1:T+1]
+        training_dates = all_dates[0:T]
 
         forecast = EnsembleForecast(all_data, county, training_methods, training_dates, step_ahead)
