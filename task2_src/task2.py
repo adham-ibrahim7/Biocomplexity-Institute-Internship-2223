@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 from scipy.integrate import quad as integral
-import timeit
+from stopwatch import Stopwatch
 
 # TODO: Create proper docstrings for each method
 class EnsembleForecast:
@@ -22,12 +22,12 @@ class EnsembleForecast:
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
-        self.weights, self.uncalibrated_sigma = self.EM(init_sigma=100, iters=10)
+        self.weights, self.uncalibrated_sigma = self.EM(init_sigma=100, max_iters=300)
 
         self.fct_date = self.training_dates[-1]
 
         print("uncalibrated sigma", self.uncalibrated_sigma)
-        # self.plot_pdf(self.fct_date, self.uncalibrated_sigma, np.arange(10000, 16000))
+        # self.plot_pdf(self.fct_date, self.uncalibrated_sigma, np.arange(0, 30000, 20))
 
         def captured(fct_date, sigma, u):
             lo, hi = self.get_confidence_interval(fct_date, sigma, u)
@@ -43,13 +43,21 @@ class EnsembleForecast:
         #     print(captured(date, self.uncalibrated_sigma, 0.5))
 
         # TODO: Is there a better way to choose bounds?
-        self.calibrated_sigma = self.get_calibrated_sigma(0, self.uncalibrated_sigma * 3, 10)
+        self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=10)
 
         print("calibrated sigma", self.calibrated_sigma)
-        # self.plot_pdf(fct_date, self.calibrated_sigma, np.arange(1500, 3000))
-
+        # self.plot_pdf(self.fct_date, self.calibrated_sigma, np.arange(0, 30000, 20))
+        #
         # for date in training_dates:
         #     print(captured(date, self.calibrated_sigma, 0.5))
+
+    def get_mean(self, date):
+        mean = 0
+        for k in range(self.K):
+            # TODO make regression_parameters a list not dict
+            a, b = self.regression_parameters[training_methods[k]]
+            mean += self.weights[k] * (a + b * self.forecasts[self.training_methods[k]][date])
+        return mean
 
     def get_data(self):
         print("BEGIN INPUTTING RAW DATA.")
@@ -97,7 +105,7 @@ class EnsembleForecast:
 
         return regression_parameters
 
-    def EM(self, init_sigma=100, iters=10):
+    def EM(self, init_sigma=100, max_iters=100, sigma_tolerance=0.01):
         def f(k, t):
             return self.forecasts[self.training_methods[k]][self.training_dates[t]]
 
@@ -111,7 +119,7 @@ class EnsembleForecast:
 
         print("BEGINNING EM ALGORITHM.")
 
-        for _ in range(iters):
+        for iter in range(max_iters):
             q = np.zeros((self.K, self.T))
             for k in range(self.K):
                 a, b = self.regression_parameters[self.training_methods[k]]
@@ -132,9 +140,17 @@ class EnsembleForecast:
                     variance += z[k][t] * np.square(y(t) - f(k, t))
             variance /= self.T
 
-            sigma = np.sqrt(variance)
+            new_sigma = np.sqrt(variance)
 
-        print("EM ALGORITHM COMPLETE.")
+            if abs(sigma - new_sigma) < sigma_tolerance:
+                break
+
+            sigma = new_sigma
+
+            # if iter % 10 == 0:
+            #     print(iter, sigma, w)
+
+        print("EM ALGORITHM COMPLETE. ITERS={}".format(iter+1))
 
         return w, sigma
 
@@ -166,7 +182,10 @@ class EnsembleForecast:
     def compute_CRPS(self, sigma):
         total_score = 0
 
+
         for date in training_dates:
+            x_axis, _ = self.get_x_axis(date, sigma)
+
             cdf = lambda t: self.ensemble_cdf(date, sigma, t)
 
             def f_1(t):
@@ -182,13 +201,13 @@ class EnsembleForecast:
             # plt.show()
 
             true_value = self.ground_truth[date]
-            total_score += integral(f_1, -np.inf, true_value)[0] + integral(f_2, true_value, np.inf)[0]
+            total_score += integral(f_1, x_axis[0], true_value)[0] + integral(f_2, true_value, x_axis[-1])[0]
 
-        print(sigma, total_score)
+        # print(sigma, total_score)
 
         return total_score
 
-    def get_calibrated_sigma(self, lo, hi, tolerance):
+    def get_calibrated_sigma(self, lo=0, hi=1000, tolerance=10):
         print("BEGIN CALIBRATION.")
 
         # best_sigma = 0
@@ -213,7 +232,7 @@ class EnsembleForecast:
 
         calibrated_sigma = 0.5 * (lo + hi)
 
-        print("CALIBRATION COMPLETE, ITERS=", count)
+        print("CALIBRATION COMPLETE, ITERS={}".format(count))
 
         return calibrated_sigma
 
@@ -254,13 +273,31 @@ class EnsembleForecast:
             pdf += self.weights[k] * stats.norm.pdf(x_axis, adjusted_fct_mean, curr_sigma)
         return pdf
 
+    def get_x_axis(self, date, sigma, x_axis=np.arange(0, 30000), c=0.01):
+        max_y = self.ensemble_pdf(date, sigma, self.get_mean(date))
+
+        y = self.ensemble_pdf(date, sigma, x_axis)
+
+        for i in range(len(x_axis)):
+            if y[i] > c * max_y:
+                break
+        for j in reversed(range(len(x_axis))):
+            if y[j] > c * max_y:
+                break
+
+        return x_axis[i:j], y[i:j]
+
     def plot_pdf(self, date, sigma, x_axis):
-        plt.plot(x_axis, self.ensemble_pdf(date, sigma, x_axis))
+        # Autoscale the x_axis
+        x_axis, y = self.get_x_axis(date, sigma, x_axis)
+
+        plt.plot(x_axis, y)
 
         for u in [.5, .95]:
             l, r = self.get_confidence_interval(date, sigma, u)
             plt.axvline(x=l, color="black", linestyle="dashed")
             plt.axvline(x=r, color="black", linestyle="dashed")
+
         plt.axvline(x=self.ground_truth[date], color="black")
 
         plt.show()
@@ -281,7 +318,7 @@ if __name__ == "__main__":
     for county in all_counties[:1]:
         print("PROCESSING", county)
 
-        step_ahead = '1-step_ahead'
+        step_ahead = '2-step_ahead'
         training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
 
         T = 15
