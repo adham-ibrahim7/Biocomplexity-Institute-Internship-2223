@@ -1,18 +1,17 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy import stats
-from scipy.integrate import quad as integral
+from scipy import stats, integrate
 from stopwatch import Stopwatch
 
 # TODO: Create proper docstrings for each method
 class EnsembleForecast:
-    def __init__(self, all_data_df, county, training_methods, training_dates, step_ahead):
+    def __init__(self, all_data_df, county, training_methods, training_dates: np.ndarray, horizon, step_ahead):
         self.all_data_df = all_data_df
-        # self.training_counties = training_counties
         self.county = county
         self.training_methods = training_methods
         self.training_dates = training_dates
+        self.horizon = horizon
         self.step_ahead = step_ahead
 
         self.forecasts, self.ground_truth = self.get_data()
@@ -22,42 +21,34 @@ class EnsembleForecast:
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
-        self.weights, self.uncalibrated_sigma = self.EM(init_sigma=100, max_iters=300)
+        self.weights, self.uncalibrated_sigma = self.expectation_maximization(max_iters=300)
 
         self.fct_date = self.training_dates[-1]
 
-        print("uncalibrated sigma", self.uncalibrated_sigma)
-        # self.plot_pdf(self.fct_date, self.uncalibrated_sigma, np.arange(0, 30000, 20))
-
-        def captured(fct_date, sigma, u):
-            lo, hi = self.get_confidence_interval(fct_date, sigma, u)
-            true_value = self.ground_truth[fct_date]
-            margin = min(abs(true_value - lo), abs(hi - true_value))
-            if lo < true_value < hi:
-                start = "CAPTURED, MARGIN={}".format(margin)
-            else:
-                start = "NOT CAPTURED, MARGIN={}".format(margin)
-            return "{} ".format(fct_date) + start # + "\n\t\tinterval: ({}, {}), true: {}".format(lo, hi, true_value)
-
+        # def captured(fct_date, sigma, u):
+        #     lo, hi = self.get_confidence_interval(fct_date, sigma, interval_size=u)
+        #     true_value = self.ground_truth[fct_date]
+        #     margin = min(abs(true_value - lo), abs(hi - true_value))
+        #     if lo < true_value < hi:
+        #         start = "CAPTURED, MARGIN={}".format(margin)
+        #     else:
+        #         start = "NOT CAPTURED, MARGIN={}".format(margin)
+        #     return "{} ".format(fct_date) + start # + "\n\t\tinterval: ({}, {}), true: {}".format(lo, hi, true_value)
+        #
         # for date in training_dates:
         #     print(captured(date, self.uncalibrated_sigma, 0.5))
 
         # TODO: Is there a better way to choose bounds?
         self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=10)
 
-        print("calibrated sigma", self.calibrated_sigma)
-        # self.plot_pdf(self.fct_date, self.calibrated_sigma, np.arange(0, 30000, 20))
+        print("weights:", self.weights)
+        print("uncalibrated sigma:", self.uncalibrated_sigma)
+        print("calibrated sigma:", self.calibrated_sigma)
+        self.plot_pdf(self.horizon, self.calibrated_sigma)
+        self.plot_forecasts(self.training_methods, np.append(self.training_dates, self.horizon))
         #
         # for date in training_dates:
         #     print(captured(date, self.calibrated_sigma, 0.5))
-
-    def get_mean(self, date):
-        mean = 0
-        for k in range(self.K):
-            # TODO make regression_parameters a list not dict
-            a, b = self.regression_parameters[training_methods[k]]
-            mean += self.weights[k] * (a + b * self.forecasts[self.training_methods[k]][date])
-        return mean
 
     def get_data(self):
         print("BEGIN INPUTTING RAW DATA.")
@@ -66,21 +57,19 @@ class EnsembleForecast:
         ground_truth: dict[str, float] = {}
 
         county_df = self.all_data_df.query("cnty == '{}'".format(self.county))
+
+        dates_to_read = np.append(self.training_dates, self.horizon)
+
         for method in self.training_methods:
             county_method_df = county_df.query("method == '{}'".format(method))
             forecasts[method] = {}
-            for date in self.training_dates:
-                target_df = county_method_df.query(
-                    "horizon == '{}' and step_ahead == '{}'".format(date, self.step_ahead))
+            for date in dates_to_read:
+                target_df = county_method_df.query("horizon == '{}' and step_ahead == '{}'".format(date, self.step_ahead))
                 if not target_df.empty:
                     fct_mean = target_df.at[target_df.index[0], 'fct_mean']
                     forecasts[method][date] = fct_mean
-
-                if date not in ground_truth:
-                    temp = county_method_df.query("fct_date == @date")
-                    if temp.empty:
-                        continue
-                    ground_truth[date] = temp.at[temp.index[0], 'true']
+                    if date not in ground_truth:
+                        ground_truth[date] = target_df.at[target_df.index[0], 'true']
 
         print("DONE INPUTTING RAW DATA.")
 
@@ -90,14 +79,8 @@ class EnsembleForecast:
         regression_parameters = {}
 
         for method in self.training_methods:
-            # for county in self.training_counties:
-                # print(method.ljust(20), end=' ')
-                # for day in training_dates:
-                #     print('T' if day in valid_dates[method] else ' ', end='')
-                # print()
-
-            x = list(self.forecasts[method].values())
-            y = list(self.ground_truth.values())
+            x = list(self.forecasts[method][date] for date in self.training_dates)
+            y = list(self.ground_truth[date] for date in self.training_dates)
 
             slope, intercept, _, _, _ = stats.linregress(x, y)
             regression_parameters[method] = (intercept, slope)
@@ -105,7 +88,7 @@ class EnsembleForecast:
 
         return regression_parameters
 
-    def EM(self, init_sigma=100, max_iters=100, sigma_tolerance=0.01):
+    def expectation_maximization(self, init_sigma=1000, max_iters=100, sigma_tolerance=0.01):
         def f(k, t):
             return self.forecasts[self.training_methods[k]][self.training_dates[t]]
 
@@ -114,25 +97,31 @@ class EnsembleForecast:
 
         init_w = np.full(self.K, 1 / self.K)
 
-        w = init_w
+        weights = init_w
         sigma = init_sigma
 
         print("BEGINNING EM ALGORITHM.")
 
         for iter in range(max_iters):
+            # print(weights, sigma)
+
             q = np.zeros((self.K, self.T))
             for k in range(self.K):
                 a, b = self.regression_parameters[self.training_methods[k]]
                 for t in range(self.T):
-                    q[k][t] = w[k] * stats.norm(a + b * f(k, t), sigma).pdf(y(t))
+                    q[k][t] = weights[k] * stats.norm(a + b * f(k, t), sigma).pdf(y(t))
+                    if q[k][t] == 0:
+                        print(a + b * f(k, t), sigma, y(t))
             z = np.zeros((self.K, self.T))
             for k in range(self.K):
                 for t in range(self.T):
                     z[k][t] = q[k][t] / sum(q[j][t] for j in range(self.K))
 
-            w = np.zeros(self.K)
+            # print(q, z)
+
+            new_weights = np.zeros(self.K)
             for k in range(self.K):
-                w[k] = np.mean(z[k, :])
+                new_weights[k] = np.mean(z[k, :])
 
             variance = 0
             for t in range(self.T):
@@ -146,13 +135,14 @@ class EnsembleForecast:
                 break
 
             sigma = new_sigma
+            weights = new_weights
 
             # if iter % 10 == 0:
             #     print(iter, sigma, w)
 
         print("EM ALGORITHM COMPLETE. ITERS={}".format(iter+1))
 
-        return w, sigma
+        return weights, sigma
 
     def sample(self, date, sigma):
         k = np.random.choice(list(range(self.K)), p=self.weights)
@@ -160,7 +150,7 @@ class EnsembleForecast:
         mean = a + b * self.forecasts[self.training_methods[k]][date]
         return np.random.normal(mean, sigma)
 
-    def get_confidence_interval(self, date, sigma, interval_size, n_samples=2500):
+    def get_confidence_interval(self, date, sigma, interval_size=0.5, n_samples=10000):
         samples = np.empty(n_samples)
         for i in range(n_samples):
             samples[i] = self.sample(date, sigma)
@@ -169,7 +159,12 @@ class EnsembleForecast:
 
         start_index = int(n_samples * (.5 * (1 - interval_size)))
         end_index = n_samples - start_index
-        return samples[start_index], samples[end_index]
+
+        m = 25
+        left = np.mean(samples[start_index-m: start_index+m])
+        right = np.mean(samples[end_index-m: end_index+m])
+
+        return left, right
 
     def ensemble_cdf(self, date, sigma, x_axis):
         cdf = 0
@@ -182,9 +177,8 @@ class EnsembleForecast:
     def compute_CRPS(self, sigma):
         total_score = 0
 
-
         for date in training_dates:
-            x_axis, _ = self.get_x_axis(date, sigma)
+            x_axis, _ = self.get_pdf_x_axis(date, sigma)
 
             cdf = lambda t: self.ensemble_cdf(date, sigma, t)
 
@@ -201,7 +195,7 @@ class EnsembleForecast:
             # plt.show()
 
             true_value = self.ground_truth[date]
-            total_score += integral(f_1, x_axis[0], true_value)[0] + integral(f_2, true_value, x_axis[-1])[0]
+            total_score += integrate.quad(f_1, x_axis[0], true_value)[0] + integrate.quad(f_2, true_value, x_axis[-1])[0]
 
         # print(sigma, total_score)
 
@@ -209,15 +203,6 @@ class EnsembleForecast:
 
     def get_calibrated_sigma(self, lo=0, hi=1000, tolerance=10):
         print("BEGIN CALIBRATION.")
-
-        # best_sigma = 0
-        # best_CRPS = 1000000
-        #
-        # for sigma in range:
-        #     curr_CRPS = CRPS(ground_truth, training_counties, training_methods, date, regression_parameters, sigma)
-        #     if curr_CRPS < best_CRPS:
-        #         best_CRPS = curr_CRPS
-        #         best_sigma = sigma
 
         count = 0
         while hi - lo > tolerance:
@@ -239,18 +224,17 @@ class EnsembleForecast:
     def filter_valid_dates(self, method, dates):
         return np.array(list(filter(lambda date: date in self.forecasts[method], dates)))
 
-    def plot_forecasts(self, plt_counties, plt_methods, plt_dates):
-        for county in plt_counties:
-            plt.clf()
-            plt.plot(plt_dates, list(map(lambda date: self.ground_truth[date], plt_dates)), color='black')
-            for method in plt_methods:
-                valid_dates = self.filter_valid_dates(method, plt_dates)
-                plt.plot(valid_dates, list(map(lambda x: self.forecasts[method][x], valid_dates)))
-            # plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
-            plt.legend(labels=['gtruth'] + plt_methods)
-            plt.title(county + " forecasts")
-            plt.gcf().subplots_adjust(bottom=0.2)
-            plt.show()
+    def plot_forecasts(self, plt_methods, plt_dates):
+        plt.clf()
+        plt.plot(plt_dates, list(map(lambda date: self.ground_truth[date], plt_dates)), color='black')
+        for method in plt_methods:
+            valid_dates = self.filter_valid_dates(method, plt_dates)
+            plt.plot(valid_dates, list(map(lambda date: self.get_bias_corrected_forecast(method, date), valid_dates)))
+        plt.xticks(self.training_dates[::3], rotation=30)
+        plt.legend(labels=['gtruth'] + plt_methods)
+        plt.title("cnty={}, horizon={}, step_ahead={}".format(self.county, self.horizon, self.step_ahead))
+        plt.gcf().subplots_adjust(bottom=0.2)
+        plt.show()
 
     def plot_forecasts_error(self, plt_counties, plt_methods, plt_dates):
         for county in plt_counties:
@@ -273,7 +257,10 @@ class EnsembleForecast:
             pdf += self.weights[k] * stats.norm.pdf(x_axis, adjusted_fct_mean, curr_sigma)
         return pdf
 
-    def get_x_axis(self, date, sigma, x_axis=np.arange(0, 30000), c=0.01):
+    def get_pdf_x_axis(self, date, sigma, x_axis=None, c=0.01):
+        if x_axis is None:
+            x_axis = np.arange(0, self.get_mean(date) * 5, 20)
+
         max_y = self.ensemble_pdf(date, sigma, self.get_mean(date))
 
         y = self.ensemble_pdf(date, sigma, x_axis)
@@ -287,9 +274,9 @@ class EnsembleForecast:
 
         return x_axis[i:j], y[i:j]
 
-    def plot_pdf(self, date, sigma, x_axis):
+    def plot_pdf(self, date, sigma, x_axis=None):
         # Autoscale the x_axis
-        x_axis, y = self.get_x_axis(date, sigma, x_axis)
+        x_axis, y = self.get_pdf_x_axis(date, sigma, x_axis)
 
         plt.plot(x_axis, y)
 
@@ -299,8 +286,19 @@ class EnsembleForecast:
             plt.axvline(x=r, color="black", linestyle="dashed")
 
         plt.axvline(x=self.ground_truth[date], color="black")
+        plt.title("cnty={}, horizon={}, step_ahead={}".format(self.county, self.horizon, self.step_ahead))
 
         plt.show()
+
+    def get_bias_corrected_forecast(self, method, date):
+        a, b = self.regression_parameters[method]
+        return a + b * self.forecasts[method][date]
+
+    def get_mean(self, date):
+        mean = 0
+        for k in range(self.K):
+            mean += self.weights[k] * self.get_bias_corrected_forecast(training_methods[k], date)
+        return mean
 
 ################################################################################################
 # MAIN CODE
@@ -313,15 +311,22 @@ if __name__ == "__main__":
 
     all_counties = all_data.cnty.unique()
     all_methods = all_data.method.unique()
-    all_dates = all_data.horizon.unique()[1:]
+    all_dates = all_data.horizon.unique()
+    all_step_aheads = all_data.step_ahead.unique()
+
+    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
+    # training_methods = ['PatchSim_adpt', 'AR_spatial']
+    T = 15
+    training_dates = all_dates[0:T]
+    horizon = all_dates[T]
+    print(horizon)
+
+    stopwatch = Stopwatch()
 
     for county in all_counties[:1]:
-        print("PROCESSING", county)
+        for step_ahead in all_step_aheads:
+            print("-------cnty={}, step_ahead={}----------".format(county, step_ahead))
+            forecast = EnsembleForecast(all_data, county, training_methods, training_dates, horizon, step_ahead)
 
-        step_ahead = '2-step_ahead'
-        training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
-
-        T = 15
-        training_dates = all_dates[0:T]
-
-        forecast = EnsembleForecast(all_data, county, training_methods, training_dates, step_ahead)
+    stopwatch.stop()
+    print("TOTAL TIME", stopwatch)
