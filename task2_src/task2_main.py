@@ -6,13 +6,16 @@ from stopwatch import Stopwatch
 
 # TODO: Create proper docstrings for each method
 class EnsembleForecast:
-    def __init__(self, all_data_df, county, training_methods, training_dates: np.ndarray, horizon, step_ahead):
+    def __init__(self, all_data_df, county, training_methods, training_dates: np.ndarray, horizon, step_ahead, print_status=False):
         self.all_data_df = all_data_df
         self.county = county
         self.training_methods = training_methods
         self.training_dates = training_dates
         self.horizon = horizon
         self.step_ahead = step_ahead
+        self.print_status = print_status
+
+        self.all_dates = np.append(self.training_dates, self.horizon)
 
         self.forecasts, self.ground_truth = self.get_data()
         self.regression_parameters = self.get_regression_parameters()
@@ -39,31 +42,24 @@ class EnsembleForecast:
         #     print(captured(date, self.uncalibrated_sigma, 0.5))
 
         # TODO: Is there a better way to choose bounds?
-        self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=10)
-
-        print("weights:", self.weights)
-        print("uncalibrated sigma:", self.uncalibrated_sigma)
-        print("calibrated sigma:", self.calibrated_sigma)
-        self.plot_pdf(self.horizon, self.calibrated_sigma)
-        self.plot_forecasts(self.training_methods, np.append(self.training_dates, self.horizon))
+        self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=100)
         #
         # for date in training_dates:
         #     print(captured(date, self.calibrated_sigma, 0.5))
 
     def get_data(self):
-        print("BEGIN INPUTTING RAW DATA.")
+        if self.print_status:
+            print("BEGIN INPUTTING RAW DATA.")
 
         forecasts: dict[str, dict[str, float]] = {}
         ground_truth: dict[str, float] = {}
 
         county_df = self.all_data_df.query("cnty == '{}'".format(self.county))
 
-        dates_to_read = np.append(self.training_dates, self.horizon)
-
         for method in self.training_methods:
             county_method_df = county_df.query("method == '{}'".format(method))
             forecasts[method] = {}
-            for date in dates_to_read:
+            for date in self.all_dates:
                 target_df = county_method_df.query("horizon == '{}' and step_ahead == '{}'".format(date, self.step_ahead))
                 if not target_df.empty:
                     fct_mean = target_df.at[target_df.index[0], 'fct_mean']
@@ -71,7 +67,8 @@ class EnsembleForecast:
                     if date not in ground_truth:
                         ground_truth[date] = target_df.at[target_df.index[0], 'true']
 
-        print("DONE INPUTTING RAW DATA.")
+        if self.print_status:
+            print("DONE INPUTTING RAW DATA.")
 
         return forecasts, ground_truth
 
@@ -100,7 +97,8 @@ class EnsembleForecast:
         weights = init_w
         sigma = init_sigma
 
-        print("BEGINNING EM ALGORITHM.")
+        if self.print_status:
+            print("BEGINNING EM ALGORITHM.")
 
         for iter in range(max_iters):
             # print(weights, sigma)
@@ -110,8 +108,8 @@ class EnsembleForecast:
                 a, b = self.regression_parameters[self.training_methods[k]]
                 for t in range(self.T):
                     q[k][t] = weights[k] * stats.norm(a + b * f(k, t), sigma).pdf(y(t))
-                    if q[k][t] == 0:
-                        print(a + b * f(k, t), sigma, y(t))
+                    # if q[k][t] == 0:
+                    #     print(a + b * f(k, t), sigma, y(t))
             z = np.zeros((self.K, self.T))
             for k in range(self.K):
                 for t in range(self.T):
@@ -140,7 +138,8 @@ class EnsembleForecast:
             # if iter % 10 == 0:
             #     print(iter, sigma, w)
 
-        print("EM ALGORITHM COMPLETE. ITERS={}".format(iter+1))
+        if self.print_status:
+            print("EM ALGORITHM COMPLETE. ITERS={}".format(iter+1))
 
         return weights, sigma
 
@@ -177,7 +176,7 @@ class EnsembleForecast:
     def compute_CRPS(self, sigma):
         total_score = 0
 
-        for date in training_dates:
+        for date in self.training_dates:
             x_axis, _ = self.get_pdf_x_axis(date, sigma)
 
             cdf = lambda t: self.ensemble_cdf(date, sigma, t)
@@ -202,7 +201,8 @@ class EnsembleForecast:
         return total_score
 
     def get_calibrated_sigma(self, lo=0, hi=1000, tolerance=10):
-        print("BEGIN CALIBRATION.")
+        if self.print_status:
+            print("BEGIN CALIBRATION.")
 
         count = 0
         while hi - lo > tolerance:
@@ -217,37 +217,10 @@ class EnsembleForecast:
 
         calibrated_sigma = 0.5 * (lo + hi)
 
-        print("CALIBRATION COMPLETE, ITERS={}".format(count))
+        if self.print_status:
+            print("CALIBRATION COMPLETE, ITERS={}".format(count))
 
         return calibrated_sigma
-
-    def filter_valid_dates(self, method, dates):
-        return np.array(list(filter(lambda date: date in self.forecasts[method], dates)))
-
-    def plot_forecasts(self, plt_methods, plt_dates):
-        plt.clf()
-        plt.plot(plt_dates, list(map(lambda date: self.ground_truth[date], plt_dates)), color='black')
-        for method in plt_methods:
-            valid_dates = self.filter_valid_dates(method, plt_dates)
-            plt.plot(valid_dates, list(map(lambda date: self.get_bias_corrected_forecast(method, date), valid_dates)))
-        plt.xticks(self.training_dates[::3], rotation=30)
-        plt.legend(labels=['gtruth'] + plt_methods)
-        plt.title("cnty={}, horizon={}, step_ahead={}".format(self.county, self.horizon, self.step_ahead))
-        plt.gcf().subplots_adjust(bottom=0.2)
-        plt.show()
-
-    def plot_forecasts_error(self, plt_counties, plt_methods, plt_dates):
-        for county in plt_counties:
-            plt.clf()
-            for method in plt_methods:
-                valid_dates = self.filter_valid_dates(method, plt_dates)
-                plt.plot(valid_dates,
-                         list(map(lambda date: self.forecasts[method][date] / self.ground_truth[date], valid_dates)))
-            # plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
-            plt.legend(labels=plt_methods)
-            plt.title(county + " error")
-            plt.gcf().subplots_adjust(bottom=0.2)
-            plt.show()
 
     def ensemble_pdf(self, date, curr_sigma, x_axis):
         pdf = 0
@@ -274,7 +247,8 @@ class EnsembleForecast:
 
         return x_axis[i:j], y[i:j]
 
-    def plot_pdf(self, date, sigma, x_axis=None):
+    def plot_pdf(self, date, sigma, x_axis=None, show=True, save_to=None):
+        plt.clf()
         # Autoscale the x_axis
         x_axis, y = self.get_pdf_x_axis(date, sigma, x_axis)
 
@@ -286,9 +260,49 @@ class EnsembleForecast:
             plt.axvline(x=r, color="black", linestyle="dashed")
 
         plt.axvline(x=self.ground_truth[date], color="black")
-        plt.title("cnty={}, horizon={}, step_ahead={}".format(self.county, self.horizon, self.step_ahead))
+        plt.title("cnty={}, horizon={},\n step_ahead={}, lead_time={}".format(self.county, self.horizon, self.step_ahead, self.T))
 
-        plt.show()
+        if save_to is not None:
+            plt.savefig(save_to)
+
+        if show:
+            plt.show()
+
+    def filter_valid_dates(self, method, dates):
+        return np.array(list(filter(lambda date: date in self.forecasts[method], dates)))
+
+    def plot_forecasts(self, plt_methods, plt_dates, show=True, save_to=None):
+        plt.clf()
+
+        plt.plot(plt_dates, list(map(lambda date: self.ground_truth[date], plt_dates)), color='black')
+        for method in plt_methods:
+            # valid_dates = self.filter_valid_dates(method, plt_dates)
+            plt.plot(plt_dates, list(map(lambda date: self.get_bias_corrected_forecast(method, date), plt_dates)))
+
+        plt.xticks(self.all_dates, rotation=70)
+        plt.legend(labels=['gtruth'] + plt_methods)
+        plt.title("cnty={}, horizon={},\n step_ahead={}, lead_time={}".format(self.county, self.horizon, self.step_ahead, self.T))
+        plt.gcf().subplots_adjust(bottom=0.25)
+
+        if save_to is not None:
+            plt.savefig(save_to)
+
+        if show:
+            plt.show()
+
+
+    # def plot_forecasts_error(self, plt_counties, plt_methods, plt_dates):
+    #     for county in plt_counties:
+    #         plt.clf()
+    #         for method in plt_methods:
+    #             valid_dates = self.filter_valid_dates(method, plt_dates)
+    #             plt.plot(valid_dates,
+    #                      list(map(lambda date: self.forecasts[method][date] / self.ground_truth[date], valid_dates)))
+    #         # plt.xticks(list(all_dates[i] for i in range(0, len(all_dates), 10)), rotation=30)
+    #         plt.legend(labels=plt_methods)
+    #         plt.title(county + " error")
+    #         plt.gcf().subplots_adjust(bottom=0.2)
+    #         plt.show()
 
     def get_bias_corrected_forecast(self, method, date):
         a, b = self.regression_parameters[method]
@@ -297,36 +311,6 @@ class EnsembleForecast:
     def get_mean(self, date):
         mean = 0
         for k in range(self.K):
-            mean += self.weights[k] * self.get_bias_corrected_forecast(training_methods[k], date)
+            mean += self.weights[k] * self.get_bias_corrected_forecast(self.training_methods[k], date)
         return mean
 
-################################################################################################
-# MAIN CODE
-################################################################################################
-
-if __name__ == "__main__":
-    in_filename = "../task2_data/top_10_pop_all_step_ahead.csv"
-
-    all_data = pd.read_csv(in_filename, dtype={"cnty": "str"})
-
-    all_counties = all_data.cnty.unique()
-    all_methods = all_data.method.unique()
-    all_dates = all_data.horizon.unique()
-    all_step_aheads = all_data.step_ahead.unique()
-
-    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'PatchSim_adpt']
-    # training_methods = ['PatchSim_adpt', 'AR_spatial']
-    T = 15
-    training_dates = all_dates[0:T]
-    horizon = all_dates[T]
-    print(horizon)
-
-    stopwatch = Stopwatch()
-
-    for county in all_counties[:1]:
-        for step_ahead in all_step_aheads:
-            print("-------cnty={}, step_ahead={}----------".format(county, step_ahead))
-            forecast = EnsembleForecast(all_data, county, training_methods, training_dates, horizon, step_ahead)
-
-    stopwatch.stop()
-    print("TOTAL TIME", stopwatch)
