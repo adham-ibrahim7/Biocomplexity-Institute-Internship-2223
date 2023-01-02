@@ -42,7 +42,7 @@ if __name__ == "__main__":
                     'calibrated_sigma': [forecast.calibrated_sigma]
                 }
 
-                for interval_size, label in [(0.5, '05'), (0.75, '75'), (0.95, '95')]:
+                for interval_size, label in [(0.5, '50'), (0.75, '75'), (0.95, '95')]:
                     left, right = forecast.get_confidence_interval(forecast.horizon, forecast.calibrated_sigma,
                                                                    interval_size=interval_size)
                     captured = left < forecast.ground_truth[forecast.horizon] < right

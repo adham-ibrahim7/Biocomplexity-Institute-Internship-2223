@@ -1,4 +1,4 @@
-,lead_time,cnty,step_ahead,ensemble_mean,true,calibrated_sigma,captured_05,captured_75,captured_95
+,lead_time,cnty,step_ahead,ensemble_mean,true,calibrated_sigma,captured_50,captured_75,captured_95
 0,8,04013,1-step_ahead,2977.8982108435384,2139.0,566.8108975474776,0,0,1
 1,8,04013,2-step_ahead,2753.015834141828,2223.0,625.184287289446,0,1,1
 2,8,04013,3-step_ahead,2631.694426369727,2481.0,544.6583313298981,1,1,1
