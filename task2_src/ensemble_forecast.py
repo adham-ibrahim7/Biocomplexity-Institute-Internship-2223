@@ -63,9 +63,11 @@ class EnsembleForecast:
                 target_df = county_method_df.query("horizon == '{}' and step_ahead == '{}'".format(date, self.step_ahead))
                 if not target_df.empty:
                     fct_mean = target_df.at[target_df.index[0], 'fct_mean']
-                    forecasts[method][date] = fct_mean
                     if date not in ground_truth:
                         ground_truth[date] = target_df.at[target_df.index[0], 'true']
+                else:
+                    fct_mean = -1
+                forecasts[method][date] = fct_mean
 
         if self.print_status:
             print("DONE INPUTTING RAW DATA.")
@@ -85,7 +87,7 @@ class EnsembleForecast:
 
         return regression_parameters
 
-    def expectation_maximization(self, init_sigma=1000, max_iters=100, sigma_tolerance=0.01):
+    def expectation_maximization(self, init_sigma=5000, max_iters=100, sigma_tolerance=0.01):
         def f(k, t):
             return self.forecasts[self.training_methods[k]][self.training_dates[t]]
 
@@ -232,18 +234,20 @@ class EnsembleForecast:
 
     def get_pdf_x_axis(self, date, sigma, x_axis=None, c=0.01):
         if x_axis is None:
-            x_axis = np.arange(0, self.get_mean(date) * 5, 20)
+            MAX = abs(self.get_mean(date) * 5)
+            x_axis = np.arange(-MAX, MAX, 20)
 
         max_y = self.ensemble_pdf(date, sigma, self.get_mean(date))
 
         y = self.ensemble_pdf(date, sigma, x_axis)
 
-        for i in range(len(x_axis)):
-            if y[i] > c * max_y:
-                break
-        for j in reversed(range(len(x_axis))):
-            if y[j] > c * max_y:
-                break
+        i = 0
+        while y[i] < c * max_y:
+                i += 1
+
+        j = len(y)-1
+        while y[j] < c * max_y:
+                j -= 1
 
         return x_axis[i:j], y[i:j]
 
