@@ -87,7 +87,7 @@ class EnsembleForecast:
 
         return regression_parameters
 
-    def expectation_maximization(self, init_sigma=5000, max_iters=100, sigma_tolerance=0.01):
+    def expectation_maximization(self, init_sigma=5000, max_iters=100, sigma_tolerance=1):
         def f(k, t):
             return self.forecasts[self.training_methods[k]][self.training_dates[t]]
 
