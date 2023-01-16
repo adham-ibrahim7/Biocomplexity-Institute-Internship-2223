@@ -1,8 +1,7 @@
-import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats, integrate
-from stopwatch import Stopwatch
+import properscoring as ps
 
 # TODO: Create proper docstrings for each method
 class EnsembleForecast:
@@ -20,7 +19,6 @@ class EnsembleForecast:
         self.forecasts, self.ground_truth = self.get_data()
         self.regression_parameters = self.get_regression_parameters()
 
-        # self.S = len(self.training_counties)
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
@@ -199,6 +197,18 @@ class EnsembleForecast:
             total_score += integrate.quad(f_1, x_axis[0], true_value)[0] + integrate.quad(f_2, true_value, x_axis[-1])[0]
 
         # print(sigma, total_score)
+
+        return total_score
+
+    def compute_CRPS_fast(self, sigma, n_samples=1000):
+        total_score = 0
+
+        for date in self.training_dates:
+            samples = np.empty(n_samples)
+            for i in range(n_samples):
+                samples[i] = self.sample(date, sigma)
+
+            total_score += ps.crps_ensemble(self.ground_truth[date], samples)
 
         return total_score
 
