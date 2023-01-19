@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from scipy import stats, integrate
 import properscoring as ps
+from stopwatch import Stopwatch
+
 
 # TODO: Create proper docstrings for each method
 class EnsembleForecast:
@@ -39,11 +42,13 @@ class EnsembleForecast:
         # for date in training_dates:
         #     print(captured(date, self.uncalibrated_sigma, 0.5))
 
+        stopwatch = Stopwatch()
+
         # TODO: Is there a better way to choose bounds?
         self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=100)
-        #
-        # for date in training_dates:
-        #     print(captured(date, self.calibrated_sigma, 0.5))
+
+        stopwatch.stop()
+        print("Calibation time: ", stopwatch)
 
     def get_data(self):
         if self.print_status:
@@ -200,15 +205,13 @@ class EnsembleForecast:
 
         return total_score
 
-    def compute_CRPS_fast(self, sigma, n_samples=1000):
+    def compute_CRPS_2(self, sigma):
         total_score = 0
 
         for date in self.training_dates:
-            samples = np.empty(n_samples)
-            for i in range(n_samples):
-                samples[i] = self.sample(date, sigma)
-
-            total_score += ps.crps_ensemble(self.ground_truth[date], samples)
+            cdf = lambda t: self.ensemble_cdf(date, sigma, t)
+            x_axis, _ = self.get_pdf_x_axis(date, sigma)
+            ps.crps_quadrature(self.ground_truth[date], cdf_or_dist=cdf, xmin=x_axis[0], xmax=x_axis[-1], tol=0.01)
 
         return total_score
 
@@ -328,3 +331,39 @@ class EnsembleForecast:
             mean += self.weights[k] * self.get_bias_corrected_forecast(self.training_methods[k], date)
         return mean
 
+if __name__ == "__main__":
+    in_filename = "../task2_data/top_10_pop_all_step_ahead.csv"
+    out_filename = "../task2_data/experiment_1.csv"
+
+    all_data = pd.read_csv(in_filename, dtype={"cnty": "str"})
+
+    all_counties = all_data.cnty.unique()
+    all_methods = all_data.method.unique()
+    all_dates = all_data.horizon.unique()
+    all_step_aheads = all_data.step_ahead.unique()
+
+    counties = list(all_counties)
+    # this county has less data available
+    counties.remove('12086')
+    # for the first 45 weeks, these methods all have data
+    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF']
+
+    horizon_index = 44
+    lead_time = 8
+
+    county = counties[0]
+    horizon = all_dates[horizon_index]
+    training_dates = all_dates[horizon_index - lead_time: horizon_index]
+    step_ahead = '1-step_ahead'
+
+    forecast = EnsembleForecast(all_data, county, training_methods, training_dates, horizon, step_ahead,
+                                print_status=True)
+    print("uncalibrated sigma", forecast.uncalibrated_sigma)
+    print("calibrated sigma", forecast.calibrated_sigma)
+
+    for interval_size, label in [(0.5, '50'), (0.75, '75'), (0.95, '95')]:
+        left, right = forecast.get_confidence_interval(forecast.horizon, forecast.calibrated_sigma,
+                                                       interval_size=interval_size)
+        captured = left < forecast.ground_truth[forecast.horizon] < right
+
+        print(label, captured)
