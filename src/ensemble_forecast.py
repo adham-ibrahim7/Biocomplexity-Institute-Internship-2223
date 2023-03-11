@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -25,30 +27,17 @@ class EnsembleForecast:
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
-        self.weights, self.uncalibrated_sigma = self.expectation_maximization(max_iters=300)
+        self.weights, self.uncalibrated_sigma = self.BMA_expectation_maximization(max_iters=EM_iters)
 
         self.fct_date = self.training_dates[-1]
 
-        # def captured(fct_date, sigma, u):
-        #     lo, hi = self.get_confidence_interval(fct_date, sigma, interval_size=u)
-        #     true_value = self.ground_truth[fct_date]
-        #     margin = min(abs(true_value - lo), abs(hi - true_value))
-        #     if lo < true_value < hi:
-        #         start = "CAPTURED, MARGIN={}".format(margin)
-        #     else:
-        #         start = "NOT CAPTURED, MARGIN={}".format(margin)
-        #     return "{} ".format(fct_date) + start # + "\n\t\tinterval: ({}, {}), true: {}".format(lo, hi, true_value)
+        # stopwatch = Stopwatch()
         #
-        # for date in training_dates:
-        #     print(captured(date, self.uncalibrated_sigma, 0.5))
-
-        stopwatch = Stopwatch()
-
-        # TODO: Is there a better way to choose bounds?
-        self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=100)
-
-        stopwatch.stop()
-        print("Calibation time: ", stopwatch)
+        # # TODO: Is there a better way to choose bounds?
+        # self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=100)
+        #
+        # stopwatch.stop()
+        # print("Calibation time: ", stopwatch)
 
     def get_data(self):
         if self.print_status:
@@ -90,7 +79,7 @@ class EnsembleForecast:
 
         return regression_parameters
 
-    def expectation_maximization(self, init_sigma=5000, max_iters=100, sigma_tolerance=1):
+    def BMA_expectation_maximization(self, init_sigma=5000, max_iters=100, sigma_tolerance=1):
         def f(k, t):
             return self.forecasts[self.training_methods[k]][self.training_dates[t]]
 
@@ -134,8 +123,8 @@ class EnsembleForecast:
 
             new_sigma = np.sqrt(variance)
 
-            if abs(sigma - new_sigma) < sigma_tolerance:
-                break
+            # if abs(sigma - new_sigma) < sigma_tolerance:
+            #     break
 
             sigma = new_sigma
             weights = new_weights
@@ -288,16 +277,16 @@ class EnsembleForecast:
     def filter_valid_dates(self, method, dates):
         return np.array(list(filter(lambda date: date in self.forecasts[method], dates)))
 
-    def plot_forecasts(self, plt_methods, plt_dates, show=True, save_to=None):
+    def plot_forecasts(self, show=True, save_to=None):
         plt.clf()
 
-        plt.plot(plt_dates, list(map(lambda date: self.ground_truth[date], plt_dates)), color='black')
-        for method in plt_methods:
+        plt.plot(self.training_dates, list(self.ground_truth[date] for date in self.training_dates), color='black')
+        for method in self.training_methods:
             # valid_dates = self.filter_valid_dates(method, plt_dates)
-            plt.plot(plt_dates, list(map(lambda date: self.get_bias_corrected_forecast(method, date), plt_dates)))
+            plt.plot(self.training_dates, list(self.get_bias_corrected_forecast(method, date) for date in self.training_dates))
 
         plt.xticks(self.all_dates, rotation=70)
-        plt.legend(labels=['gtruth'] + plt_methods)
+        plt.legend(labels=['gtruth'] + self.training_methods)
         plt.title("cnty={}, horizon={},\n step_ahead={}, lead_time={}".format(self.county, self.horizon, self.step_ahead, self.T))
         plt.gcf().subplots_adjust(bottom=0.25)
 
@@ -306,7 +295,6 @@ class EnsembleForecast:
 
         if show:
             plt.show()
-
 
     # def plot_forecasts_error(self, plt_counties, plt_methods, plt_dates):
     #     for county in plt_counties:
@@ -331,9 +319,64 @@ class EnsembleForecast:
             mean += self.weights[k] * self.get_bias_corrected_forecast(self.training_methods[k], date)
         return mean
 
+    # def get_shapley_weights(self):
+    #     shapley_value = self.approximate_shapley(num_permutations=10000,
+    #                                                 payoff=self.mae_payoff)
+    #
+    #     weights = np.zeros(self.K)
+    #
+    #     sum = np.sum(list(shapley_value[method] for method in shapley_value))
+    #     for k in range(self.K):
+    #         weights[k] = shapley_value[self.training_methods[k]] / sum
+    #
+    #     return weights
+
+    def mae_payoff(self, methods):
+        if len(methods) == 0:
+            return 0
+
+        total_error = 0
+
+        for method in methods:
+            for date in self.training_dates:
+                error = self.get_bias_corrected_forecast(method, date) - self.ground_truth[date]
+                total_error += abs(error)
+
+        return total_error / (self.K * self.T)
+
+    def squared_error_payoff(self, methods):
+        if len(methods) == 0:
+            return 0
+
+        total_error = 0
+
+        for method in methods:
+            for date in self.training_dates:
+                error = self.get_bias_corrected_forecast(method, date) - self.ground_truth[date]
+                total_error += error * error
+
+        return total_error / (self.K * self.T)
+
+    def approximate_shapley(self, num_permutations=1000, payoff=None):
+        if payoff is None:
+            raise Exception("Must provide a payoff function to approximate_shapley()")
+
+        shapley = defaultdict(float)
+
+        curr_permutation = self.training_methods.copy()
+
+        for _ in range(num_permutations):
+            curr_permutation = np.random.permutation(curr_permutation)
+
+            for k in range(0, self.K):
+                difference = payoff(curr_permutation[:k+1]) - payoff(curr_permutation[:k])
+                shapley[curr_permutation[k]] += difference / num_permutations
+
+        return list(shapley[method] for method in training_methods)
+
 if __name__ == "__main__":
     in_filename = "../task2_data/top_10_pop_all_step_ahead.csv"
-    out_filename = "../task2_data/experiment_1.csv"
+    # out_filename = "../task2_data/experiment_1.csv"
 
     all_data = pd.read_csv(in_filename, dtype={"cnty": "str"})
 
@@ -348,22 +391,36 @@ if __name__ == "__main__":
     # for the first 45 weeks, these methods all have data
     training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF']
 
-    horizon_index = 44
     lead_time = 8
-
-    county = counties[0]
-    horizon = all_dates[horizon_index]
-    training_dates = all_dates[horizon_index - lead_time: horizon_index]
     step_ahead = '1-step_ahead'
+    county = counties[0]
 
-    forecast = EnsembleForecast(all_data, county, training_methods, training_dates, horizon, step_ahead,
-                                print_status=True)
-    print("uncalibrated sigma", forecast.uncalibrated_sigma)
-    print("calibrated sigma", forecast.calibrated_sigma)
+    for EM_iters in [10, 20, 50, 100]:
+        pointsX = []
+        pointsY = []
 
-    for interval_size, label in [(0.5, '50'), (0.75, '75'), (0.95, '95')]:
-        left, right = forecast.get_confidence_interval(forecast.horizon, forecast.calibrated_sigma,
-                                                       interval_size=interval_size)
-        captured = left < forecast.ground_truth[forecast.horizon] < right
+        for horizon_index in range(15, 45):
+            horizon = all_dates[horizon_index]
+            training_dates = all_dates[horizon_index - lead_time: horizon_index]
 
-        print(label, captured)
+            ensemble = EnsembleForecast(all_data, county, training_methods, training_dates, horizon, step_ahead)
+
+            # ensemble.plot_forecasts()
+
+            shapley = ensemble.approximate_shapley(payoff=ensemble.squared_error_payoff)
+
+            print("horizon:", horizon)
+            print("Shapley value:", shapley)
+            print("BMA weights:", ensemble.weights)
+
+            pointsX += list(np.array(shapley) / np.sum(shapley))
+            pointsY += list(ensemble.weights)
+
+            print()
+
+        plt.clf()
+        plt.scatter(pointsX, pointsY)
+        plt.xlabel("Shapley Value")
+        plt.ylabel("Weight Assigned by BMA")
+        plt.title("EM iters={}".format(EM_iters))
+        plt.show()

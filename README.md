@@ -1,6 +1,11 @@
 ### Forecasting
 
-- `\task2_src\ensemble_forecast.py`: contains all the algorithms for ensemble forecasting, calibration etc.
-- `\task2_src\experiment_1.py`: run the experiment and save the data to the results file
+Analysis of different methods of creating an ensemble forecast for covid case prediction.
 
-- `\task2_data\experiment1.csv`: the results
+Task 1: Implement the BMA ensemble algorithms and visualize results.
+
+Task 2: Calibrate the ensemble by minimizing the CRPS score.
+
+Task 3: Implement an algorithm to find the shapley value using average squared error as the payoff function.
+
+Source code is currently in `src\ensemble_forecast.py`.

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from stopwatch import Stopwatch
 
-from task2_src.ensemble_forecast import EnsembleForecast
+from src.ensemble_forecast import EnsembleForecast
 
 if __name__ == "__main__":
     in_filename = "../task2_data/top_10_pop_all_step_ahead.csv"

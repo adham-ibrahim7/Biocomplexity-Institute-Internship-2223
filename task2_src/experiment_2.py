@@ -3,7 +3,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from stopwatch import Stopwatch
 
-from task2_src.ensemble_forecast import EnsembleForecast
+from src.ensemble_forecast import EnsembleForecast
 
 if __name__ == "__main__":
     forecasts_filename = "../task2_data/top_10_pop_all_step_ahead.csv"
