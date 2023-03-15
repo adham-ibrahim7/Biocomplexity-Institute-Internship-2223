@@ -53,8 +53,8 @@ if __name__ == "__main__":
 
                 print(row)
 
-    out_df = pd.concat(frames, ignore_index=True)
-    out_df.to_csv(out_filename, sep=',')
+    # out_df = pd.concat(frames, ignore_index=True)
+    # out_df.to_csv(out_filename, sep=',')
 
     stopwatch.stop()
     print("TOTAL TIME", stopwatch)

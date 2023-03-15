@@ -1,3 +1,4 @@
+import itertools
 from collections import defaultdict
 
 import matplotlib.pyplot as plt
@@ -27,7 +28,7 @@ class EnsembleForecast:
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
-        self.weights, self.uncalibrated_sigma = self.BMA_expectation_maximization(max_iters=EM_iters)
+        # self.weights, self.uncalibrated_sigma = self.BMA_expectation_maximization(max_iters=20)
 
         self.fct_date = self.training_dates[-1]
 
@@ -319,6 +320,19 @@ class EnsembleForecast:
             mean += self.weights[k] * self.get_bias_corrected_forecast(self.training_methods[k], date)
         return mean
 
+    def get_weights(self):
+        weights_dict = {}
+        for k in range(self.K):
+            weights_dict[self.training_methods[k]] = self.weights[k]
+        return weights_dict
+
+    def get_mae(self):
+        mae = {}
+        for method in self.training_methods:
+            mae[method] = abs(self.ground_truth[self.horizon] - self.forecasts[method][self.horizon])
+            # mae[method] = abs(self.ground_truth[self.horizon] - self.get_bias_corrected_forecast(method, self.horizon))
+        return mae
+
     # def get_shapley_weights(self):
     #     shapley_value = self.approximate_shapley(num_permutations=10000,
     #                                                 payoff=self.mae_payoff)
@@ -338,24 +352,44 @@ class EnsembleForecast:
         total_error = 0
 
         for method in methods:
-            for date in self.training_dates:
-                error = self.get_bias_corrected_forecast(method, date) - self.ground_truth[date]
-                total_error += abs(error)
+            error = self.get_bias_corrected_forecast(method, self.horizon) - self.ground_truth[self.horizon]
+            total_error += abs(error)
 
-        return total_error / (self.K * self.T)
+        return total_error / len(methods)
 
-    def squared_error_payoff(self, methods):
-        if len(methods) == 0:
-            return 0
+    # def squared_error_payoff(self, methods):
+    #     if len(methods) == 0:
+    #         return 0
+    #
+    #     total_error = 0
+    #
+    #     for method in methods:
+    #         for date in self.training_dates:
+    #             error = self.get_bias_corrected_forecast(method, date) - self.ground_truth[date]
+    #             total_error += error * error
+    #
+    #     return total_error / (self.K * self.T)
 
-        total_error = 0
+    def exact_shapley(self, payoff=None):
+        if payoff is None:
+            raise Exception("Must provide a payoff function to exact_shapley()")
 
-        for method in methods:
-            for date in self.training_dates:
-                error = self.get_bias_corrected_forecast(method, date) - self.ground_truth[date]
-                total_error += error * error
+        shapley = defaultdict(float)
 
-        return total_error / (self.K * self.T)
+        permutations = itertools.permutations(self.training_methods.copy())
+
+        count = 0
+
+        for curr_permutation in permutations:
+            count += 1
+            for k in range(0, self.K):
+                difference = payoff(curr_permutation[:k+1]) - payoff(curr_permutation[:k])
+                shapley[curr_permutation[k]] += difference
+
+        for method in shapley:
+            shapley[method] /= count
+
+        return list(shapley[method] for method in self.training_methods)
 
     def approximate_shapley(self, num_permutations=1000, payoff=None):
         if payoff is None:
@@ -372,55 +406,5 @@ class EnsembleForecast:
                 difference = payoff(curr_permutation[:k+1]) - payoff(curr_permutation[:k])
                 shapley[curr_permutation[k]] += difference / num_permutations
 
-        return list(shapley[method] for method in training_methods)
+        return list(shapley[method] for method in self.training_methods)
 
-if __name__ == "__main__":
-    in_filename = "../task2_data/top_10_pop_all_step_ahead.csv"
-    # out_filename = "../task2_data/experiment_1.csv"
-
-    all_data = pd.read_csv(in_filename, dtype={"cnty": "str"})
-
-    all_counties = all_data.cnty.unique()
-    all_methods = all_data.method.unique()
-    all_dates = all_data.horizon.unique()
-    all_step_aheads = all_data.step_ahead.unique()
-
-    counties = list(all_counties)
-    # this county has less data available
-    counties.remove('12086')
-    # for the first 45 weeks, these methods all have data
-    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF']
-
-    lead_time = 8
-    step_ahead = '1-step_ahead'
-    county = counties[0]
-
-    for EM_iters in [10, 20, 50, 100]:
-        pointsX = []
-        pointsY = []
-
-        for horizon_index in range(15, 45):
-            horizon = all_dates[horizon_index]
-            training_dates = all_dates[horizon_index - lead_time: horizon_index]
-
-            ensemble = EnsembleForecast(all_data, county, training_methods, training_dates, horizon, step_ahead)
-
-            # ensemble.plot_forecasts()
-
-            shapley = ensemble.approximate_shapley(payoff=ensemble.squared_error_payoff)
-
-            print("horizon:", horizon)
-            print("Shapley value:", shapley)
-            print("BMA weights:", ensemble.weights)
-
-            pointsX += list(np.array(shapley) / np.sum(shapley))
-            pointsY += list(ensemble.weights)
-
-            print()
-
-        plt.clf()
-        plt.scatter(pointsX, pointsY)
-        plt.xlabel("Shapley Value")
-        plt.ylabel("Weight Assigned by BMA")
-        plt.title("EM iters={}".format(EM_iters))
-        plt.show()
