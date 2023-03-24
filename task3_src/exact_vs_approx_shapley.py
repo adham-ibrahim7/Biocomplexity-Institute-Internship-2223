@@ -3,6 +3,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from stopwatch import Stopwatch
 
+from src.Shapley import Shapley
 from src.ensemble_forecast import EnsembleForecast
 
 if __name__ == "__main__":
@@ -18,31 +19,22 @@ if __name__ == "__main__":
     # this county has less data available
     counties.remove('12086')
     # for the first 45 weeks, these methods all have data
-    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'lstm']
+    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF']
 
     all_horizons = []
 
-    stopwatch = Stopwatch()
-    for horizon_index in range(20, 30):
+    for horizon_index in range(30, 35):
         horizon = all_dates[horizon_index]
         all_horizons.append(horizon)
 
-        for lead_time in [12]:
+        for lead_time in [8]:
             training_dates = all_dates[horizon_index - lead_time: horizon_index]
 
-            for county in counties:
-                for step_ahead in all_step_aheads:
-                    forecast = EnsembleForecast(forecasts_df, county, training_methods, training_dates, horizon, step_ahead)
+            for county in counties[:1]:
+                for step_ahead in all_step_aheads[:1]:
+                    print(county, all_dates[horizon_index])
 
-                    approx = forecast.approximate_shapley(num_permutations=20, payoff=forecast.mae_payoff)
-                    exact = forecast.exact_shapley(payoff=forecast.mae_payoff)
+                    shapley = Shapley(forecasts_df, county, training_methods, training_dates, horizon, step_ahead)
 
-                    errors = list((approx[i] - exact[i]) / exact[i] for i in range(len(approx)))
-                    # print(errors)
-                    print(approx)
-                    print(exact)
-                    print()
-
-
-    stopwatch.stop()
-    print("TOTAL TIME", stopwatch)
+                    print("approx:", shapley.approximate_shapley(num_permutations=10))
+                    print("exact:", shapley.exact_shapley())

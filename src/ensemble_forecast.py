@@ -11,38 +11,38 @@ from stopwatch import Stopwatch
 
 # TODO: Create proper docstrings for each method
 class EnsembleForecast:
-    def __init__(self, all_data_df, county, training_methods, training_dates: np.ndarray, horizon, step_ahead, print_status=False):
+    def __init__(self, all_data_df, county, training_methods, training_dates, horizon, step_ahead, calibrate=False):
         self.all_data_df = all_data_df
         self.county = county
         self.training_methods = training_methods
         self.training_dates = training_dates
         self.horizon = horizon
         self.step_ahead = step_ahead
-        self.print_status = print_status
+        # self.print_status = print_status
 
         self.all_dates = np.append(self.training_dates, self.horizon)
 
         self.forecasts, self.ground_truth = self.get_data()
+        # print(self.ground_truth)
         self.regression_parameters = self.get_regression_parameters()
 
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
-        # self.weights, self.uncalibrated_sigma = self.BMA_expectation_maximization(max_iters=20)
-
-        self.fct_date = self.training_dates[-1]
+        self.weights, self.uncalibrated_sigma = self.BMA_expectation_maximization(max_iters=20)
 
         # stopwatch = Stopwatch()
         #
         # # TODO: Is there a better way to choose bounds?
-        # self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=100)
+        if calibrate:
+            self.calibrated_sigma = self.get_calibrated_sigma(lo=0, hi=self.uncalibrated_sigma * 3, tolerance=100)
         #
         # stopwatch.stop()
         # print("Calibation time: ", stopwatch)
 
     def get_data(self):
-        if self.print_status:
-            print("BEGIN INPUTTING RAW DATA.")
+        # if self.print_status:
+        #     print("BEGIN INPUTTING RAW DATA.")
 
         forecasts: dict[str, dict[str, float]] = {}
         ground_truth: dict[str, float] = {}
@@ -62,8 +62,8 @@ class EnsembleForecast:
                     fct_mean = -1
                 forecasts[method][date] = fct_mean
 
-        if self.print_status:
-            print("DONE INPUTTING RAW DATA.")
+        # if self.print_status:
+        #     print("DONE INPUTTING RAW DATA.")
 
         return forecasts, ground_truth
 
@@ -92,8 +92,8 @@ class EnsembleForecast:
         weights = init_w
         sigma = init_sigma
 
-        if self.print_status:
-            print("BEGINNING EM ALGORITHM.")
+        # if self.print_status:
+        #     print("BEGINNING EM ALGORITHM.")
 
         for iter in range(max_iters):
             # print(weights, sigma)
@@ -133,8 +133,8 @@ class EnsembleForecast:
             # if iter % 10 == 0:
             #     print(iter, sigma, w)
 
-        if self.print_status:
-            print("EM ALGORITHM COMPLETE. ITERS={}".format(iter+1))
+        # if self.print_status:
+        #     print("EM ALGORITHM COMPLETE. ITERS={}".format(iter+1))
 
         return weights, sigma
 
@@ -206,8 +206,8 @@ class EnsembleForecast:
         return total_score
 
     def get_calibrated_sigma(self, lo=0, hi=1000, tolerance=10):
-        if self.print_status:
-            print("BEGIN CALIBRATION.")
+        # if self.print_status:
+        #     print("BEGIN CALIBRATION.")
 
         count = 0
         while hi - lo > tolerance:
@@ -222,8 +222,8 @@ class EnsembleForecast:
 
         calibrated_sigma = 0.5 * (lo + hi)
 
-        if self.print_status:
-            print("CALIBRATION COMPLETE, ITERS={}".format(count))
+        # if self.print_status:
+        #     print("CALIBRATION COMPLETE, ITERS={}".format(count))
 
         return calibrated_sigma
 
