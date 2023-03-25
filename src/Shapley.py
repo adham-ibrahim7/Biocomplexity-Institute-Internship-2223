@@ -19,16 +19,27 @@ class Shapley:
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
+        self.cache = {}
+
     def payoff(self, methods):
         if len(methods) == 0:
             return 0
 
         # print(methods)
 
+        key = tuple(sorted(methods))
+        if key in self.cache:
+            # print("IN CACHE :)")
+            return self.cache[key]
+            pass
+
         forecast = EnsembleForecast(self.all_data_df, self.county, methods, self.training_dates, self.horizon, self.step_ahead)
         mean = forecast.get_mean(self.horizon)
 
-        return abs(mean - forecast.ground_truth[self.horizon])
+        value = abs(mean - forecast.ground_truth[self.horizon])
+        self.cache[key] = value
+
+        return value
 
     def exact_shapley(self):
         shapley = defaultdict(float)

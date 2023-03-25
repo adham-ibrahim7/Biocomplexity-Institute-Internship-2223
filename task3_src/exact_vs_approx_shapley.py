@@ -19,7 +19,7 @@ if __name__ == "__main__":
     # this county has less data available
     counties.remove('12086')
     # for the first 45 weeks, these methods all have data
-    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF']
+    training_methods = ['AR', 'ARIMA', 'AR_spatial', 'ENKF', 'lstm']
 
     all_horizons = []
 
@@ -36,5 +36,14 @@ if __name__ == "__main__":
 
                     shapley = Shapley(forecasts_df, county, training_methods, training_dates, horizon, step_ahead)
 
-                    print("approx:", shapley.approximate_shapley(num_permutations=10))
-                    print("exact:", shapley.exact_shapley())
+                    results = []
+
+                    for _ in range(100):
+                        results.append(shapley.approximate_shapley(num_permutations=20))
+
+                    print("means:  ", np.mean(results, axis=0))
+                    print("stddevs:", np.std(results, axis=0))
+                    print("exact:  ", shapley.exact_shapley())
+
+                    forecast = EnsembleForecast(forecasts_df, county, training_methods, training_dates, horizon, step_ahead)
+                    print(forecast.weights)
