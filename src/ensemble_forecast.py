@@ -29,7 +29,7 @@ class EnsembleForecast:
         self.K = len(self.training_methods)
         self.T = len(self.training_dates)
 
-        self.weights, self.uncalibrated_sigma = self.BMA_expectation_maximization(max_iters=20)
+        self.weights, self.uncalibrated_sigma = self.BMA_expectation_maximization(max_iters=50)
 
         # stopwatch = Stopwatch()
         #

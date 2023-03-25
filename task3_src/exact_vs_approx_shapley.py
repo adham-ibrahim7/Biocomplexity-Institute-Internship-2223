@@ -23,14 +23,16 @@ if __name__ == "__main__":
 
     all_horizons = []
 
-    for horizon_index in range(30, 35):
+    print(all_dates[73])
+
+    for horizon_index in range(30, 31):
         horizon = all_dates[horizon_index]
         all_horizons.append(horizon)
 
         for lead_time in [8]:
             training_dates = all_dates[horizon_index - lead_time: horizon_index]
 
-            for county in counties[:1]:
+            for county in counties:
                 for step_ahead in all_step_aheads[:1]:
                     print(county, all_dates[horizon_index])
 
@@ -46,4 +48,4 @@ if __name__ == "__main__":
                     print("exact:  ", shapley.exact_shapley())
 
                     forecast = EnsembleForecast(forecasts_df, county, training_methods, training_dates, horizon, step_ahead)
-                    print(forecast.weights)
+                    print("BMA weights: ", forecast.weights)
